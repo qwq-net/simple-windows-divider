@@ -1,0 +1,50 @@
+[package]
+name = "windows-divider"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Windows 11 resident window manager: disables native snap, hotkey grid snapping, per-app layout restore. Anti-cheat-safe (documented user-mode APIs only)."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "windows_divider"
+path = "src/lib.rs"
+
+[[bin]]
+name = "windows-divider"
+path = "src/main.rs"
+
+# --- Cross-platform dependencies (used by the pure, unit-tested logic) ---
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+regex = "1"
+directories = "5"
+
+# --- Windows-only dependencies ---
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+] }
+windows-registry = "0.6"
+tray-icon = "0.24"
+notify = "8"
+notify-debouncer-full = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# build.rs はビルドホスト上で動くため、build-dependencies の cfg もホストで評価される。
+# 従って Windows ターゲット用マニフェスト埋め込みであっても target 限定にせず通常の依存に置く
+# （実際に埋め込むかは build.rs 内で CARGO_CFG_WINDOWS により判定する）。
+[build-dependencies]
+embed-manifest = "1"
