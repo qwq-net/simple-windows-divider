@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "windows-divider"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "directories",
  "embed-manifest",

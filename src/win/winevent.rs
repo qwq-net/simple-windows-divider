@@ -1,16 +1,19 @@
 //! 機能 C: ウィンドウイベント監視（`SetWinEventHook`, out-of-context）。
 //!
-//! 生成/表示/フォアグラウンド化を監視し、対象 HWND を**スレッドローカルのキューに積むだけ**にする
+//! トップレベルウィンドウの「生成」だけを監視し、対象 HWND をスレッドローカルのキューに積むだけにする
 //! （コールバックは超軽量に保ち、再入・大量発火に耐える）。実処理はメッセージループ本体が
 //! [`drain_events`] で取り出して行う。out-of-context なので他プロセスへ DLL を注入しない。
+//!
+//! 表示（SHOW）やフォアグラウンド化（FOREGROUND）は監視しない。これらは既存ウィンドウのドラッグや
+//! フォーカス移動でも発火し、ユーザーが手で動かしているウィンドウを学習配置へ引き戻してしまうため。
+//! 自動配置の対象は「新しく作られたウィンドウ」だけに限る。
 
 use std::cell::RefCell;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, OBJID_WINDOW,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    EVENT_OBJECT_CREATE, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 
 use super::convert::hwnd_to_u64;
@@ -39,21 +42,29 @@ impl Drop for WinEventHooks {
     }
 }
 
-/// 生成・表示・フォアグラウンドの監視フックを設置する。メインスレッドから呼ぶこと。
+/// ウィンドウ生成（`EVENT_OBJECT_CREATE`）の監視フックを設置する。メインスレッドから呼ぶこと。
+///
+/// 監視するのは生成だけ。表示・フォアグラウンド化を監視しないのは、既存ウィンドウのドラッグや
+/// フォーカス移動でそれらが発火し、手動操作中のウィンドウを学習配置へ引き戻してしまうため。
+/// 生成直後のサイズ未確定は、呼び出し側の遅延リトライ（`RESTORE_DELAY_MS` ほか）で吸収する。
 pub fn install() -> WinEventHooks {
+    // OUTOFCONTEXT: 対象プロセスへ DLL を注入しない（コールバックは自プロセス内で動く）。
+    // SKIPOWNPROCESS: 自分のウィンドウ起因のイベントを最初から受け取らない。
+    let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
+    let h = unsafe {
+        SetWinEventHook(
+            EVENT_OBJECT_CREATE,
+            EVENT_OBJECT_CREATE,
+            None,
+            Some(win_event_proc),
+            0,
+            0,
+            flags,
+        )
+    };
     let mut hooks = Vec::new();
-    for ev in [
-        EVENT_OBJECT_CREATE,
-        EVENT_OBJECT_SHOW,
-        EVENT_SYSTEM_FOREGROUND,
-    ] {
-        // OUTOFCONTEXT: 対象プロセスへ DLL を注入しない（コールバックは自プロセス内で動く）。
-        // SKIPOWNPROCESS: 自分のウィンドウ起因のイベントを最初から受け取らない。
-        let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
-        let h = unsafe { SetWinEventHook(ev, ev, None, Some(win_event_proc), 0, 0, flags) };
-        if !h.is_invalid() {
-            hooks.push(h);
-        }
+    if !h.is_invalid() {
+        hooks.push(h);
     }
     WinEventHooks { hooks }
 }
