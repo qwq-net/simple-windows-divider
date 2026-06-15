@@ -290,13 +290,43 @@ impl App {
     }
 
     /// 矢印キー: ウィンドウのグリッド占有範囲を 1 セル動かして再配置する。
+    ///
+    /// 端でこれ以上動けない（占有が変わらない＝端セルかつその軸が最小幅）とき、操作方向に隣モニタが
+    /// あればそのモニタへ送る（反対側の端セルに着地）。隣が無ければ従来どおり（実質無変化）。
     fn apply_arrow(&mut self, hwnd: HWND, family: Family) {
         let (cols, rows) = self.grid_dims();
         let Some((base, work)) = self.prepare_base(hwnd, cols, rows) else {
             return;
         };
         let next = grid::step(base, family, cols, rows);
+        if next == base && self.move_to_adjacent_monitor(hwnd, base, family, cols, rows) {
+            return;
+        }
         self.set_span(hwnd, next, cols, rows, work);
+    }
+
+    /// `family` 方向の隣モニタへウィンドウを送る。隣が無ければ何もせず `false`。
+    ///
+    /// 着地は反対側の端セル（[`grid::cross_edge_span`]）。移動先モニタの作業領域へ適用し、`(exe, class)` を学習する。
+    fn move_to_adjacent_monitor(
+        &mut self,
+        hwnd: HWND,
+        base: GridSpan,
+        family: Family,
+        cols: u32,
+        rows: u32,
+    ) -> bool {
+        let Some(cur) = monitor::monitor_for_window(hwnd) else {
+            return false;
+        };
+        let monitors = monitor::enumerate();
+        let fulls: Vec<Rect> = monitors.iter().map(|m| m.full).collect();
+        let Some(adj) = grid::adjacent_monitor(&fulls, cur.full, family) else {
+            return false;
+        };
+        let landing = grid::cross_edge_span(base, family, cols, rows);
+        self.set_span(hwnd, landing, cols, rows, monitors[adj].work_area);
+        true
     }
 
     /// 反対方向同時押し: 押した方向の軸だけを全幅にする（←→=横軸フル・行維持／↑↓=縦軸フル・列維持）。

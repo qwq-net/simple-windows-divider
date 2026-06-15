@@ -2,9 +2,11 @@
 
 use std::mem::size_of;
 
-use windows::Win32::Foundation::HWND;
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 
 use super::convert::from_rect;
@@ -38,4 +40,26 @@ fn monitor_info(hmon: HMONITOR) -> Option<MonitorInfo> {
 pub fn monitor_for_window(hwnd: HWND) -> Option<MonitorInfo> {
     let hmon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
     monitor_info(hmon)
+}
+
+/// 接続中の全モニタ情報を列挙する。隣接モニタ判定（モニタ間移動）に使う。情報取得に失敗したモニタは除く。
+pub fn enumerate() -> Vec<MonitorInfo> {
+    let mut out: Vec<MonitorInfo> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(enum_proc),
+            LPARAM(&mut out as *mut Vec<MonitorInfo> as isize),
+        );
+    }
+    out
+}
+
+unsafe extern "system" fn enum_proc(hmon: HMONITOR, _hdc: HDC, _rc: *mut RECT, lparam: LPARAM) -> BOOL {
+    let out = unsafe { &mut *(lparam.0 as *mut Vec<MonitorInfo>) };
+    if let Some(info) = monitor_info(hmon) {
+        out.push(info);
+    }
+    BOOL(1) // TRUE: 列挙を継続する
 }

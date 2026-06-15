@@ -151,12 +151,97 @@ pub fn estimate_span(work: Rect, current: Rect, columns: u32, rows: u32) -> Grid
     }
 }
 
+/// 端モニタへ送るときの「着地」占有範囲。`family` の反対側の端へ幅/高さ 1 セルで置き、もう一方の軸は維持する。
+///
+/// 右へ越える → 隣の左端（`l=r=0`）、左へ → 右端、下へ → 上端（`t=b=0`）、上へ → 下端。行/列のうち
+/// 操作軸でない側（右左なら行、上下なら列）は `span` の値をそのまま使う。
+pub fn cross_edge_span(span: GridSpan, family: Family, columns: u32, rows: u32) -> GridSpan {
+    let max_c = columns.max(1) - 1;
+    let max_r = rows.max(1) - 1;
+    match family {
+        Family::Right => GridSpan { l: 0, r: 0, t: span.t, b: span.b },
+        Family::Left => GridSpan { l: max_c, r: max_c, t: span.t, b: span.b },
+        Family::Bottom => GridSpan { l: span.l, r: span.r, t: 0, b: 0 },
+        Family::Top => GridSpan { l: span.l, r: span.r, t: max_r, b: max_r },
+    }
+}
+
+/// `current`（モニタ矩形）から見て `family` 方向に隣接するモニタの添字を返す。無ければ `None`。
+///
+/// 操作方向にあり（右なら `left >= current.right` など）、かつ垂直/水平に重なるモニタのうち最も近いものを選ぶ。
+/// `current` 自身は方向条件で除外される。重なりが無いモニタは隣接とみなさない。
+pub fn adjacent_monitor(monitors: &[Rect], current: Rect, family: Family) -> Option<usize> {
+    let v_overlap = |m: Rect| m.top < current.bottom && m.bottom > current.top;
+    let h_overlap = |m: Rect| m.left < current.right && m.right > current.left;
+    let mut best: Option<(usize, i32)> = None;
+    for (i, &m) in monitors.iter().enumerate() {
+        let (in_dir, dist) = match family {
+            Family::Right => (m.left >= current.right && v_overlap(m), m.left - current.right),
+            Family::Left => (m.right <= current.left && v_overlap(m), current.left - m.right),
+            Family::Bottom => (m.top >= current.bottom && h_overlap(m), m.top - current.bottom),
+            Family::Top => (m.bottom <= current.top && h_overlap(m), current.top - m.bottom),
+        };
+        if in_dir && dist >= 0 && best.is_none_or(|(_, bd)| dist < bd) {
+            best = Some((i, dist));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const COLS: u32 = 3;
     const ROWS: u32 = 2;
+
+    fn mon(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
+        Rect { left, top, right, bottom }
+    }
+
+    #[test]
+    fn cross_edge_span_lands_on_opposite_edge() {
+        // 右へ越える: 行は維持、列は左端 1 セル
+        assert_eq!(cross_edge_span(span(2, 2, 0, 1), Family::Right, COLS, ROWS), span(0, 0, 0, 1));
+        // 左へ越える: 右端 1 セル
+        assert_eq!(cross_edge_span(span(0, 0, 1, 1), Family::Left, COLS, ROWS), span(2, 2, 1, 1));
+        // 下へ越える: 上端 1 セル・列維持
+        assert_eq!(cross_edge_span(span(1, 1, 1, 1), Family::Bottom, COLS, ROWS), span(1, 1, 0, 0));
+        // 上へ越える: 下端 1 セル・列維持
+        assert_eq!(cross_edge_span(span(0, 1, 0, 0), Family::Top, COLS, ROWS), span(0, 1, 1, 1));
+    }
+
+    #[test]
+    fn adjacent_monitor_left_right() {
+        let a = mon(0, 0, 1920, 1080);
+        let b = mon(1920, 0, 3840, 1080);
+        let mons = [a, b];
+        assert_eq!(adjacent_monitor(&mons, a, Family::Right), Some(1));
+        assert_eq!(adjacent_monitor(&mons, a, Family::Left), None);
+        assert_eq!(adjacent_monitor(&mons, b, Family::Left), Some(0));
+        assert_eq!(adjacent_monitor(&mons, b, Family::Right), None);
+    }
+
+    #[test]
+    fn adjacent_monitor_vertical_and_requires_overlap() {
+        let top = mon(0, 0, 1920, 1080);
+        let bottom = mon(0, 1080, 1920, 2160);
+        let mons = [top, bottom];
+        assert_eq!(adjacent_monitor(&mons, top, Family::Bottom), Some(1));
+        assert_eq!(adjacent_monitor(&mons, top, Family::Top), None);
+        // 右にあるが縦に重ならない → 隣接なし
+        let far = mon(1920, 5000, 3840, 6080);
+        assert_eq!(adjacent_monitor(&[top, far], top, Family::Right), None);
+    }
+
+    #[test]
+    fn adjacent_monitor_picks_nearest() {
+        let a = mon(0, 0, 1920, 1080);
+        let b = mon(1920, 0, 3840, 1080);
+        let c = mon(3840, 0, 5760, 1080);
+        let mons = [a, b, c];
+        assert_eq!(adjacent_monitor(&mons, a, Family::Right), Some(1)); // 最も近い b
+    }
 
     fn span(l: u32, r: u32, t: u32, b: u32) -> GridSpan {
         GridSpan { l, r, t, b }
