@@ -10,7 +10,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, OBJID_WINDOW,
-    WINEVENT_OUTOFCONTEXT,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 
 use super::convert::hwnd_to_u64;
@@ -47,7 +47,10 @@ pub fn install() -> WinEventHooks {
         EVENT_OBJECT_SHOW,
         EVENT_SYSTEM_FOREGROUND,
     ] {
-        let h = unsafe { SetWinEventHook(ev, ev, None, Some(win_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT) };
+        // OUTOFCONTEXT: 対象プロセスへ DLL を注入しない（コールバックは自プロセス内で動く）。
+        // SKIPOWNPROCESS: 自分のウィンドウ起因のイベントを最初から受け取らない。
+        let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
+        let h = unsafe { SetWinEventHook(ev, ev, None, Some(win_event_proc), 0, 0, flags) };
         if !h.is_invalid() {
             hooks.push(h);
         }

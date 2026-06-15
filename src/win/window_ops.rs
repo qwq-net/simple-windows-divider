@@ -4,8 +4,9 @@ use std::mem::size_of;
 
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowPlacement, GetWindowRect, SetWindowPos, ShowWindow, SW_MAXIMIZE,
-    SW_RESTORE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, WINDOWPLACEMENT,
+    GetForegroundWindow, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, SetWindowPos,
+    ShowWindow, GWL_STYLE, SW_MAXIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
+    WINDOWPLACEMENT,
 };
 
 use super::convert::{from_rect, to_rect};
@@ -19,6 +20,13 @@ pub fn foreground_window() -> Option<HWND> {
     } else {
         Some(hwnd)
     }
+}
+
+/// ウィンドウの `GWL_STYLE` ビット（`WS_*`）。取得失敗時は 0（＝どのスタイルも立っていない扱い）。
+///
+/// 値の意味づけ（スナップ対象か等）は純ロジックの [`crate::window_style`] に委ねる。
+pub fn window_style_bits(hwnd: HWND) -> u32 {
+    unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 }
 }
 
 /// ウィンドウの現在の矩形（仮想デスクトップ座標、物理ピクセル）。取得失敗時 `None`。

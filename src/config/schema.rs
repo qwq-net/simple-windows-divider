@@ -90,6 +90,8 @@ pub struct Exclusions {
     pub processes: Vec<String>,
     /// フルスクリーン/排他検出時に介入しない。
     pub skip_when_fullscreen: bool,
+    /// タイトルバーもリサイズ枠も持たない素のウィンドウ（ボーダーレス全画面ゲーム・オーバーレイ等）に介入しない。
+    pub skip_non_tileable: bool,
 }
 
 impl Default for Exclusions {
@@ -104,6 +106,7 @@ impl Default for Exclusions {
                 "r5apex.exe".into(),
             ],
             skip_when_fullscreen: true,
+            skip_non_tileable: true,
         }
     }
 }
@@ -139,6 +142,16 @@ mod tests {
         let ex = Exclusions::default();
         assert!(ex.processes.iter().any(|p| p == "valorant.exe"));
         assert!(ex.skip_when_fullscreen);
+        assert!(ex.skip_non_tileable);
+    }
+
+    #[test]
+    fn exclusions_partial_keeps_other_defaults() {
+        // processes だけ指定しても、skip_* 系は既定（true）のまま残る。
+        let cfg: Config = toml::from_str("[exclusions]\nprocesses = [\"foo.exe\"]\n").unwrap();
+        assert_eq!(cfg.exclusions.processes, vec!["foo.exe".to_string()]);
+        assert!(cfg.exclusions.skip_when_fullscreen);
+        assert!(cfg.exclusions.skip_non_tileable);
     }
 
     #[test]

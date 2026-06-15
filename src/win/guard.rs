@@ -14,15 +14,19 @@ pub enum Interventability {
     Ok,
     SkipInvalid,
     SkipFullscreen,
+    SkipNonTileable,
     SkipExcluded,
 }
 
 /// `hwnd` にウィンドウ操作を行ってよいか判定する。
 ///
-/// ゲーム等を壊さないため保守的に倒す:
+/// ゲーム等を壊さないため保守的に倒す。ハンドルを開かずに判定できる条件を先に置き、
+/// 最後にだけプロセスを開く（ゲームプロセスへハンドルを開く頻度を下げる）:
 /// - 無効ウィンドウ → `SkipInvalid`。
 /// - `skip_when_fullscreen` かつフルスクリーン/排他状態 → `SkipFullscreen`。
-/// - 所有 exe が除外リストにある → `SkipExcluded`。
+/// - `skip_non_tileable` かつタイトルバーもリサイズ枠も無いウィンドウ（ボーダーレス全画面・オーバーレイ等）
+///   → `SkipNonTileable`。スタイルだけで判定でき、未知のゲームも名前リスト無しに避けられる。
+/// - 所有 exe が除外リストにある → `SkipExcluded`（ここで初めて `OpenProcess` を使う）。
 ///
 /// 機能 B（ホットキー時）と機能 C（イベント時）の両方が必ずこれを通す。昇格ウィンドウは
 /// ここでは弾かず、`SetWindowPos` の失敗（ACCESS_DENIED）として握り潰す方針（事前判定が不確実なため）。
@@ -32,6 +36,9 @@ pub fn should_intervene(hwnd: HWND, exclusions: &Exclusions) -> Interventability
     }
     if exclusions.skip_when_fullscreen && is_fullscreen_context(hwnd) {
         return Interventability::SkipFullscreen;
+    }
+    if exclusions.skip_non_tileable && !crate::window_style::is_tileable(window_ops::window_style_bits(hwnd)) {
+        return Interventability::SkipNonTileable;
     }
     if let Some(key) = window_info::window_key(hwnd) {
         if exclusions
