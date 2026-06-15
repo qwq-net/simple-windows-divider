@@ -33,7 +33,9 @@ fn process_exe_basename(hwnd: HWND) -> Option<String> {
         return None;
     }
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
-    let mut buf = [0u16; 260];
+    // ロングパス対応環境では exe パスが 260 文字を超えうるため余裕を持たせる（取得漏れによる
+    // 除外・学習照合のミスを避ける）。
+    let mut buf = [0u16; 1024];
     let mut size = buf.len() as u32;
     let res = unsafe {
         QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut size)

@@ -94,6 +94,13 @@ pub struct Exclusions {
     pub skip_non_tileable: bool,
 }
 
+impl Exclusions {
+    /// `exe`（実行ファイル basename を想定）が除外プロセスに含まれるか。大文字小文字は無視する。
+    pub fn excludes(&self, exe: &str) -> bool {
+        self.processes.iter().any(|p| p.eq_ignore_ascii_case(exe))
+    }
+}
+
 impl Default for Exclusions {
     fn default() -> Self {
         Exclusions {
@@ -143,6 +150,15 @@ mod tests {
         assert!(ex.processes.iter().any(|p| p == "valorant.exe"));
         assert!(ex.skip_when_fullscreen);
         assert!(ex.skip_non_tileable);
+    }
+
+    #[test]
+    fn excludes_matches_case_insensitively() {
+        let ex = Exclusions { processes: vec!["Game.exe".into()], ..Default::default() };
+        assert!(ex.excludes("game.exe"));
+        assert!(ex.excludes("GAME.EXE"));
+        assert!(!ex.excludes("other.exe"));
+        assert!(!Exclusions { processes: vec![], ..Default::default() }.excludes("game.exe"));
     }
 
     #[test]

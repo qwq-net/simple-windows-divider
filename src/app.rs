@@ -40,6 +40,11 @@ const SPAN_REUSE_TOLERANCE_PX: i32 = 6;
 /// 機能 C: 生成直後のウィンドウへ復元を適用するまでの遅延と、収束までのリトライ回数（内部固定）。
 const RESTORE_DELAY_MS: u32 = 150;
 const RESTORE_MAX_ATTEMPTS: u32 = 3;
+/// 学習データ保存のデバウンス用タイマ ID と遅延。復元タイマ（`RESTORE_TIMER_BASE` 以上）と衝突しない値にする。
+const SAVE_TIMER_ID: usize = 1;
+const SAVE_DEBOUNCE_MS: u32 = 500;
+/// `spans` が無効エントリで膨らむのを防ぐための掃除しきい値（これを超えたら無効分を除去）。
+const SPANS_PRUNE_THRESHOLD: usize = 64;
 
 // 矢印キーの仮想キーコード（反対方向の同時押し＝最大化を判定するため）。
 const VK_LEFT: i32 = 0x25;
@@ -73,6 +78,8 @@ pub struct App {
     snap_backup: Option<SnapBackup>,
     restore_jobs: HashMap<usize, RestoreJob>,
     next_timer_id: usize,
+    /// 学習データに未保存の変更があるか（デバウンス保存用）。
+    layouts_dirty: bool,
     tray: Option<Tray>,
     _hooks: Option<WinEventHooks>,
     _watcher: Option<ConfigWatcher>,
@@ -105,6 +112,7 @@ pub fn run() -> windows::core::Result<()> {
         snap_backup: None,
         restore_jobs: HashMap::new(),
         next_timer_id: RESTORE_TIMER_BASE,
+        layouts_dirty: false,
         tray: None,
         _hooks: None,
         _watcher: None,
@@ -325,21 +333,50 @@ impl App {
     /// ユーザーの矢印操作からのみ呼ばれる（自動復元はこの経路を通らないため、復元が学習を上書きしない）。
     fn set_span(&mut self, hwnd: HWND, span: GridSpan, cols: u32, rows: u32, work: Rect) {
         self.spans.insert(convert::hwnd_to_u64(hwnd), span);
+        if self.spans.len() > SPANS_PRUNE_THRESHOLD {
+            self.prune_spans();
+        }
         if let Err(e) = window_ops::set_window_rect(hwnd, span.rect(cols, rows, work)) {
             tracing::warn!("set_span: set_window_rect failed: {e}");
         }
         self.learn(hwnd, span);
     }
 
-    /// ユーザー操作で確定した占有範囲を `(exe, class)` 単位で学習し、`layouts.toml` に保存する。
+    /// 既に存在しないウィンドウの `spans` エントリを掃除する（長期常駐での単調増加を防ぐ）。
+    fn prune_spans(&mut self) {
+        self.spans
+            .retain(|&id, _| window_ops::is_window(convert::u64_to_hwnd(id)));
+    }
+
+    /// ユーザー操作で確定した占有範囲を `(exe, class)` 単位で学習し、保存を予約する。
+    ///
+    /// 保存はデバウンスする（矢印連打で `layouts.toml` 書き込みが多発しないよう、最後の 1 回に合流させる）。
     fn learn(&mut self, hwnd: HWND, span: GridSpan) {
         let Some(key) = window_info::window_key(hwnd) else {
             return;
         };
         self.learned.record(&key, span);
+        self.schedule_layouts_save();
+    }
+
+    /// 学習データのディスク保存をデバウンス予約する。保存タイマを毎回張り直し、最後の変更から
+    /// `SAVE_DEBOUNCE_MS` 後に 1 回だけ書き出す（連続操作中はインメモリ更新のみ）。
+    fn schedule_layouts_save(&mut self) {
+        self.layouts_dirty = true;
+        unsafe {
+            SetTimer(Some(self.hwnd), SAVE_TIMER_ID, SAVE_DEBOUNCE_MS, None);
+        }
+    }
+
+    /// 未保存の学習データがあれば `layouts.toml` へ書き出す。失敗はログに留める。
+    fn flush_layouts_save(&mut self) {
+        if !self.layouts_dirty {
+            return;
+        }
         if let Err(e) = layouts::save(&self.layouts_path, &self.learned) {
             tracing::warn!("failed to save layouts: {e}");
         }
+        self.layouts_dirty = false;
     }
 
     /// このウィンドウの起点となる占有範囲を決める。
@@ -385,19 +422,21 @@ impl App {
     }
 
     fn maybe_schedule_restore(&mut self, hwnd: HWND) {
-        // 既に同じウィンドウのジョブが走っていれば二重起動しない。
-        if self.restore_jobs.values().any(|j| j.hwnd == hwnd) {
+        // 安価な関門（OpenProcess を伴わない）を先に通し、一過性・子ウィンドウをここで弾く。
+        // 生成イベントは大量に発火するため、その大半を GetWindowLongPtr だけで落として CPU を抑える。
+        if guard::cheap_interventability(hwnd, &self.config.exclusions) != Interventability::Ok {
             return;
         }
+        // ここで初めて OpenProcess（exe 取得）。除外判定と学習照合で同じ key を使い回す（二重取得しない）。
         let Some(key) = window_info::window_key(hwnd) else {
             return;
         };
+        if self.config.exclusions.excludes(&key.exe) {
+            return;
+        }
         let Some(span) = self.learned.lookup(&key) else {
             return;
         };
-        if !self.may_intervene(hwnd) {
-            return;
-        }
         let id = self.next_timer_id;
         self.next_timer_id += 1;
         unsafe {
@@ -414,6 +453,13 @@ impl App {
     }
 
     fn on_timer(&mut self, timer_id: usize) {
+        if timer_id == SAVE_TIMER_ID {
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), SAVE_TIMER_ID);
+            }
+            self.flush_layouts_save();
+            return;
+        }
         let Some(job) = self.restore_jobs.get_mut(&timer_id) else {
             return;
         };
@@ -517,6 +563,7 @@ impl App {
     }
 
     fn shutdown(&mut self) {
+        self.flush_layouts_save(); // デバウンス保留中の学習データを取りこぼさない
         for id in self.registered_ids.drain(..) {
             winhotkey::unregister(self.hwnd, id);
         }
