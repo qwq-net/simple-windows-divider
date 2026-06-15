@@ -1,0 +1,51 @@
+version: '3'
+
+vars:
+  VERSION:
+    sh: grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/'
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  version:
+    desc: "Cargo.toml のバージョンを表示"
+    cmds:
+      - echo "{{.VERSION}}"
+    silent: true
+
+  test:
+    desc: "テスト（純ロジック + doctest）"
+    cmds:
+      - cargo test
+
+  lint:
+    desc: "clippy（既定ターゲット + x86_64-pc-windows-gnu）"
+    cmds:
+      - cargo clippy --all-targets -- -D warnings
+      - cargo clippy --target x86_64-pc-windows-gnu -- -D warnings
+
+  build:
+    desc: "リリースビルド"
+    cmds:
+      - cargo build --release
+
+  ci:
+    desc: "CI 相当（test + lint）"
+    cmds:
+      - task: test
+      - task: lint
+
+  release:
+    desc: "Cargo.toml の版で git タグを打って push（手動。通常は main への push で自動リリース）"
+    preconditions:
+      - sh: 'test -z "$(git status --porcelain)"'
+        msg: "作業ツリーがクリーンではありません。先にコミットしてから実行してください。"
+      - sh: '! git rev-parse -q --verify "refs/tags/v{{.VERSION}}" >/dev/null 2>&1'
+        msg: "タグ v{{.VERSION}} は既に存在します。"
+    cmds:
+      - git tag -a "v{{.VERSION}}" -m "v{{.VERSION}}"
+      - git push origin "v{{.VERSION}}"
+      - 'echo "Pushed tag v{{.VERSION}} — Release ワークフローが起動します。"'

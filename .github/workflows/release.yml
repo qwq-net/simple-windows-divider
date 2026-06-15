@@ -2,46 +2,64 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ['v*.*.*']
 
 permissions:
   contents: write
 
 jobs:
+  check:
+    name: Decide release
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+            ver="${tag#v}"
+            cargo_ver="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+            if [ "$ver" != "$cargo_ver" ]; then
+              echo "Tag $tag does not match Cargo.toml version $cargo_ver" >&2
+              exit 1
+            fi
+          else
+            ver="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+            tag="v$ver"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            should_release=false
+          else
+            should_release=true
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "Decided: tag=$tag should_release=$should_release"
+
   release:
     name: Build & Release (windows)
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
-
-      - name: Verify tag matches Cargo.toml version
-        shell: pwsh
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          $tag = $env:TAG
-          $ver = $tag.TrimStart('v')
-          $cargoVer = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ($ver -ne $cargoVer) {
-            Write-Error "Tag $tag does not match Cargo.toml version $cargoVer"
-            exit 1
-          }
-          Write-Host "Version OK: $ver"
-
       - name: Test
         run: cargo test
-
       - name: Build (release)
         run: cargo build --release
-
       - name: Package
         shell: pwsh
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.check.outputs.tag }}
         run: |
           $name = "windows-divider-$($env:TAG)-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Path dist | Out-Null
@@ -52,12 +70,12 @@ jobs:
           Compress-Archive -Path dist/* -DestinationPath "$name.zip"
           $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.check.outputs.tag }}
           files: |
             windows-divider-*-x86_64-pc-windows-msvc.zip
             windows-divider-*-x86_64-pc-windows-msvc.zip.sha256
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(needs.check.outputs.tag, '-') }}

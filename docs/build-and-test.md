@@ -23,19 +23,32 @@ cargo clippy --all-targets
 GitHub Actions に 2 つのワークフローを置いています。
 
 - `.github/workflows/ci.yml` — `main` への push と PR で実行します。ubuntu で `cargo test` と clippy（既定ターゲットと `x86_64-pc-windows-gnu`）を回し、windows で `cargo build --release` を通してマニフェスト埋め込みを含む実 MSVC ビルドの破損を検出します。
-- `.github/workflows/release.yml` — `v*.*.*` 形式のタグ push で実行します。タグと `Cargo.toml` のバージョン一致を検証し、`cargo build --release` の成果物を zip（`windows-divider-vX.Y.Z-x86_64-pc-windows-msvc.zip`）に固め、SHA256 を併置して GitHub Release を作成します。リリースノートは自動生成、ハイフン付きタグ（`v1.1.0-rc.1` 等）は prerelease になります。
+- `.github/workflows/release.yml` — リリースを行います。起動方法は次の 2 つで、どちらも冪等です（同じ版の Release が既にあれば何もしません）。
+  - `main` への push で `Cargo.toml` の `version` を読み、その版の Release がまだ無ければ自動でリリースします（タグ `vX.Y.Z` の作成も行います）。
+  - `v*.*.*` 形式のタグ push でもリリースします。この場合はタグと `Cargo.toml` の版の一致を検証します。
+
+  まず ubuntu の軽いジョブでリリース要否を判定し、必要なときだけ windows でビルドします。成果物は zip（`windows-divider-vX.Y.Z-x86_64-pc-windows-msvc.zip`）に固め、SHA256 を併置して GitHub Release を作成します。リリースノートは自動生成、ハイフン付きタグ（`v1.1.0-rc.1` 等）は prerelease になります。
 
 ### リリースのやり方
 
-1. `Cargo.toml` の `version` を上げます。
-2. 同じ版のタグを打って push します。
+通常は、`Cargo.toml` の `version` を上げて `main` に push するだけです。版が新しければ Release が自動で作られます。
 
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
+明示的にタグを打ちたいときは Taskfile を使います（要 [go-task](https://taskfile.dev)）。
 
-3. release.yml が動き、zip と `.sha256` が付いた Release ができます。
+```bash
+task release   # Cargo.toml の版で v<version> タグを打って push
+```
+
+`task release` は、作業ツリーがクリーンで、同名タグが未存在のときだけ実行されます。
+
+### 開発で使う Taskfile
+
+```bash
+task test      # cargo test
+task lint      # clippy（既定 + windows-gnu）
+task ci        # test + lint（CI と同じ）
+task version   # Cargo.toml の版を表示
+```
 
 配布物は署名していません。利用者向けの注意（SmartScreen の初回警告と SHA256 照合）は [README](../README.md) を参照してください。依存ライブラリのライセンス表示が必要になったら、`cargo about` 等で `THIRD-PARTY-NOTICES.txt` を生成して zip に同梱します（現状は未同梱）。
 
