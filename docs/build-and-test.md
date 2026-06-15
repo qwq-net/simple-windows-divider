@@ -18,6 +18,27 @@ cargo test
 cargo clippy --all-targets
 ```
 
+## CI とリリース
+
+GitHub Actions に 2 つのワークフローを置いています。
+
+- `.github/workflows/ci.yml` — `main` への push と PR で実行します。ubuntu で `cargo test` と clippy（既定ターゲットと `x86_64-pc-windows-gnu`）を回し、windows で `cargo build --release` を通してマニフェスト埋め込みを含む実 MSVC ビルドの破損を検出します。
+- `.github/workflows/release.yml` — `v*.*.*` 形式のタグ push で実行します。タグと `Cargo.toml` のバージョン一致を検証し、`cargo build --release` の成果物を zip（`windows-divider-vX.Y.Z-x86_64-pc-windows-msvc.zip`）に固め、SHA256 を併置して GitHub Release を作成します。リリースノートは自動生成、ハイフン付きタグ（`v1.1.0-rc.1` 等）は prerelease になります。
+
+### リリースのやり方
+
+1. `Cargo.toml` の `version` を上げます。
+2. 同じ版のタグを打って push します。
+
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+3. release.yml が動き、zip と `.sha256` が付いた Release ができます。
+
+配布物は署名していません。利用者向けの注意（SmartScreen の初回警告と SHA256 照合）は [README](../README.md) を参照してください。依存ライブラリのライセンス表示が必要になったら、`cargo about` 等で `THIRD-PARTY-NOTICES.txt` を生成して zip に同梱します（現状は未同梱）。
+
 ## WSL2 / Linux からのクロスチェック
 
 開発時の型チェックやリンティングは、Linux からでも行えます。Windows 依存のコード（`#[cfg(windows)]`）は、Windows ターゲットを指定したときにコンパイルされます。

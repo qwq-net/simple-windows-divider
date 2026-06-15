@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-lint:
+    name: Test & Lint (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test
+      - name: Clippy (default target)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (windows target)
+        run: cargo clippy --target x86_64-pc-windows-gnu -- -D warnings
+
+  windows-build:
+    name: Release build check (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (release)
+        run: cargo build --release

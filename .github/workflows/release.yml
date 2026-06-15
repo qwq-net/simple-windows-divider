@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag matches Cargo.toml version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:TAG
+          $ver = $tag.TrimStart('v')
+          $cargoVer = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($ver -ne $cargoVer) {
+            Write-Error "Tag $tag does not match Cargo.toml version $cargoVer"
+            exit 1
+          }
+          Write-Host "Version OK: $ver"
+
+      - name: Test
+        run: cargo test
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $name = "windows-divider-$($env:TAG)-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item target/release/windows-divider.exe dist/
+          Copy-Item config.example.toml dist/
+          Copy-Item README.md dist/
+          Copy-Item LICENSE dist/
+          Compress-Archive -Path dist/* -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            windows-divider-*-x86_64-pc-windows-msvc.zip
+            windows-divider-*-x86_64-pc-windows-msvc.zip.sha256
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
