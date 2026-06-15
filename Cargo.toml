@@ -1,10 +1,10 @@
 [package]
 name = "windows-divider"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Windows 11 resident window manager: disables native snap, hotkey grid snapping, per-app layout restore. Anti-cheat-safe (documented user-mode APIs only)."
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [lib]
 name = "windows_divider"
