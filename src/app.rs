@@ -352,7 +352,7 @@ impl App {
         let base = if was_maximized {
             GridSpan::full(cols, rows)
         } else {
-            let current = window_ops::window_rect(hwnd).unwrap_or(work);
+            let current = window_ops::window_visible_rect(hwnd).unwrap_or(work);
             self.span_for(hwnd, work, current, cols, rows)
         };
         Some((base, work))
@@ -522,7 +522,7 @@ impl App {
         if let Err(e) = window_ops::set_window_rect(hwnd, target) {
             tracing::warn!("apply_learned_span: set_window_rect failed: {e}");
         }
-        window_ops::window_rect(hwnd)
+        window_ops::window_visible_rect(hwnd)
             .map(|cur| cur.approx_eq(target, CONVERGE_TOLERANCE_PX))
             .unwrap_or(false)
     }
