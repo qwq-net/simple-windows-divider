@@ -25,12 +25,14 @@ pub struct GridConfig {
     pub columns: u32,
     /// 行数（＝縦に並ぶセル数 / 水平線で分割した数）。上下キーが動かす軸。
     pub rows: u32,
+    /// 真なら、各ウィンドウが今いるモニタの解像度アスペクト比から分割数を自動判定する（`columns`/`rows` は使わない）。
+    pub auto_aspect: bool,
 }
 
 impl Default for GridConfig {
     fn default() -> Self {
-        // 既定はウルトラワイド向けの 3 列 × 2 行（垂直 3 分割・水平 2 分割）。
-        GridConfig { columns: 3, rows: 2 }
+        // 既定はウルトラワイド向けの 3 列 × 2 行（垂直 3 分割・水平 2 分割）。自動判定は既定で無効。
+        GridConfig { columns: 3, rows: 2, auto_aspect: false }
     }
 }
 
@@ -132,6 +134,7 @@ mod tests {
         assert!(cfg.general.auto_restore);
         assert_eq!(cfg.grid.columns, 3);
         assert_eq!(cfg.grid.rows, 2);
+        assert!(!cfg.grid.auto_aspect);
     }
 
     #[test]

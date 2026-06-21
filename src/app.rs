@@ -127,6 +127,7 @@ pub fn run() -> windows::core::Result<()> {
         autostart::is_enabled(),
         app.config.general.disable_snap,
         app.auto_restore,
+        app.config.grid.auto_aspect,
         app.config.grid.columns,
         app.config.grid.rows,
     );
@@ -215,6 +216,15 @@ impl App {
                 }
                 tracing::info!("auto_restore toggled: {}", self.auto_restore);
             }
+            TrayCommand::ToggleAutoAspect => {
+                self.config.grid.auto_aspect = !self.config.grid.auto_aspect;
+                self.spans.clear(); // 分割数が変わるため旧占有範囲をリセット
+                self.persist_config();
+                if let Some(t) = &self.tray {
+                    t.set_auto_aspect_checked(self.config.grid.auto_aspect);
+                }
+                tracing::info!("auto_aspect toggled: {}", self.config.grid.auto_aspect);
+            }
             TrayCommand::OpenSettings => self.open_settings(),
             TrayCommand::ReloadConfig => self.on_config_reload(),
             TrayCommand::ToggleAutostart => {
@@ -241,6 +251,7 @@ impl App {
             t.set_enabled_checked(self.enabled);
             t.set_disable_snap_checked(self.config.general.disable_snap);
             t.set_auto_restore_checked(self.auto_restore);
+            t.set_auto_aspect_checked(self.config.grid.auto_aspect);
             t.set_columns_checked(self.config.grid.columns);
             t.set_rows_checked(self.config.grid.rows);
             t.set_autostart_checked(autostart::is_enabled());
@@ -294,8 +305,7 @@ impl App {
     /// 端でこれ以上動けない（占有が変わらない＝端セルかつその軸が最小幅）とき、操作方向に隣モニタが
     /// あればそのモニタへ送る（反対側の端セルに着地）。隣が無ければ従来どおり（実質無変化）。
     fn apply_arrow(&mut self, hwnd: HWND, family: Family) {
-        let (cols, rows) = self.grid_dims();
-        let Some((base, work)) = self.prepare_base(hwnd, cols, rows) else {
+        let Some((base, work, cols, rows)) = self.prepare_base(hwnd) else {
             return;
         };
         let next = grid::step(base, family, cols, rows);
@@ -333,20 +343,21 @@ impl App {
     ///
     /// 現在の占有を起点にもう一方の軸は保つため、横軸フル→縦軸フルの 2 ステップで全画面になる。
     fn apply_axis_full(&mut self, hwnd: HWND, horizontal: bool) {
-        let (cols, rows) = self.grid_dims();
-        let Some((base, work)) = self.prepare_base(hwnd, cols, rows) else {
+        let Some((base, work, cols, rows)) = self.prepare_base(hwnd) else {
             return;
         };
         let next = grid::fill_axis(base, horizontal, cols, rows);
         self.set_span(hwnd, next, cols, rows, work);
     }
 
-    /// 操作の起点となる占有範囲と作業領域を用意する。
+    /// 操作の起点となる占有範囲・作業領域・分割数を用意する。
     ///
+    /// 分割数はそのモニタから決める（[`grid_dims_for`](Self::grid_dims_for)。自動判定が有効ならアスペクト比から）。
     /// OS 最大化中のウィンドウは全グリッド占有を起点にし（最大化から ← で `■■□` などになる）、最大化は解除する。
-    fn prepare_base(&self, hwnd: HWND, cols: u32, rows: u32) -> Option<(GridSpan, Rect)> {
+    fn prepare_base(&self, hwnd: HWND) -> Option<(GridSpan, Rect, u32, u32)> {
         let mon = monitor::monitor_for_window(hwnd)?;
         let work = mon.work_area;
+        let (cols, rows) = self.grid_dims_for(&mon);
         let was_maximized = window_ops::is_maximized(hwnd);
         window_ops::restore_if_maximized(hwnd);
         let base = if was_maximized {
@@ -355,7 +366,7 @@ impl App {
             let current = window_ops::window_visible_rect(hwnd).unwrap_or(work);
             self.span_for(hwnd, work, current, cols, rows)
         };
-        Some((base, work))
+        Some((base, work, cols, rows))
     }
 
     /// 占有範囲を保存しつつウィンドウへ適用し、`(exe, class)` 単位で学習する。
@@ -423,9 +434,13 @@ impl App {
         grid::estimate_span(work, current, cols, rows)
     }
 
-    /// 設定のグリッド分割数 `(列数, 行数)`。
-    fn grid_dims(&self) -> (u32, u32) {
-        (self.config.grid.columns, self.config.grid.rows)
+    /// このモニタで使う分割数 `(列数, 行数)`。`auto_aspect` が有効なら解像度アスペクトから自動判定し、無効なら設定値を使う。
+    fn grid_dims_for(&self, mon: &monitor::MonitorInfo) -> (u32, u32) {
+        if self.config.grid.auto_aspect {
+            grid::grid_for_aspect(mon.full.width(), mon.full.height())
+        } else {
+            (self.config.grid.columns, self.config.grid.rows)
+        }
     }
 
     fn may_intervene(&self, hwnd: HWND) -> bool {
@@ -513,10 +528,10 @@ impl App {
     /// 現在のグリッド分割数に合わせて範囲外インデックスをクランプする（分割数が学習時から変わっていても破綻しない）。
     /// 適用後に目標とほぼ一致すれば `true`（収束＝リトライ終了）。対象モニタを取得できなければ `true`（打ち切り）。
     fn apply_learned_span(&self, hwnd: HWND, span: GridSpan) -> bool {
-        let (cols, rows) = self.grid_dims();
         let Some(mon) = monitor::monitor_for_window(hwnd) else {
             return true;
         };
+        let (cols, rows) = self.grid_dims_for(&mon);
         let target = span.clamp_to(cols, rows).rect(cols, rows, mon.work_area);
         window_ops::restore_if_maximized(hwnd);
         if let Err(e) = window_ops::set_window_rect(hwnd, target) {

@@ -188,12 +188,49 @@ pub fn adjacent_monitor(monitors: &[Rect], current: Rect, family: Family) -> Opt
     best.map(|(i, _)| i)
 }
 
+/// モニタ解像度のアスペクト比（`width / height`）から分割数 `(列, 行)` を選ぶ（自動分割モード用のプリセット）。
+///
+/// 帯で判定して近似アスペクトを吸収する: `>=3.0` → 4×2（32:9 等）、`>=2.0` → 3×2（21:9 等）、
+/// `>=1.0` → 2×2（16:9 / 16:10 / 4:3 等）、`<1.0`（縦長）→ 1×2。`height` が 0 以下でも破綻しない（最低 1 として扱う）。
+pub fn grid_for_aspect(width: i32, height: i32) -> (u32, u32) {
+    let aspect = width.max(1) as f64 / height.max(1) as f64;
+    if aspect >= 3.0 {
+        (4, 2)
+    } else if aspect >= 2.0 {
+        (3, 2)
+    } else if aspect >= 1.0 {
+        (2, 2)
+    } else {
+        (1, 2)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const COLS: u32 = 3;
     const ROWS: u32 = 2;
+
+    #[test]
+    fn grid_for_aspect_maps_classes() {
+        assert_eq!(grid_for_aspect(3840, 1080), (4, 2)); // 32:9
+        assert_eq!(grid_for_aspect(3440, 1440), (3, 2)); // 21:9
+        assert_eq!(grid_for_aspect(2560, 1080), (3, 2)); // ~21:9
+        assert_eq!(grid_for_aspect(1920, 1080), (2, 2)); // 16:9
+        assert_eq!(grid_for_aspect(1920, 1200), (2, 2)); // 16:10
+        assert_eq!(grid_for_aspect(1024, 768), (2, 2)); // 4:3
+        assert_eq!(grid_for_aspect(1080, 1920), (1, 2)); // 縦長
+    }
+
+    #[test]
+    fn grid_for_aspect_boundaries() {
+        assert_eq!(grid_for_aspect(3000, 1000), (4, 2)); // ちょうど 3.0
+        assert_eq!(grid_for_aspect(2000, 1000), (3, 2)); // ちょうど 2.0
+        assert_eq!(grid_for_aspect(1000, 1000), (2, 2)); // ちょうど 1.0（正方形）
+        assert_eq!(grid_for_aspect(999, 1000), (1, 2)); // 1.0 未満
+        assert_eq!(grid_for_aspect(1920, 0), (4, 2)); // height=0 でもパニックしない
+    }
 
     fn mon(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
         Rect { left, top, right, bottom }

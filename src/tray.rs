@@ -16,6 +16,7 @@ pub enum TrayCommand {
     ToggleEnabled,
     ToggleDisableSnap,
     ToggleAutoRestore,
+    ToggleAutoAspect,
     SetColumns(u32),
     SetRows(u32),
     OpenSettings,
@@ -30,12 +31,14 @@ pub struct Tray {
     enabled_item: CheckMenuItem,
     disable_snap_item: CheckMenuItem,
     auto_restore_item: CheckMenuItem,
+    auto_aspect_item: CheckMenuItem,
     autostart_item: CheckMenuItem,
     columns_items: Vec<(u32, CheckMenuItem)>,
     rows_items: Vec<(u32, CheckMenuItem)>,
     id_enabled: MenuId,
     id_disable_snap: MenuId,
     id_auto_restore: MenuId,
+    id_auto_aspect: MenuId,
     id_autostart: MenuId,
     id_open: MenuId,
     id_reload: MenuId,
@@ -49,6 +52,7 @@ impl Tray {
         autostart: bool,
         disable_snap: bool,
         auto_restore: bool,
+        auto_aspect: bool,
         columns: u32,
         rows: u32,
     ) -> Option<Tray> {
@@ -56,6 +60,7 @@ impl Tray {
         let enabled_item = CheckMenuItem::new("ウィンドウ管理を有効化", true, enabled, None);
         let disable_snap_item = CheckMenuItem::new("標準スナップを無効化", true, disable_snap, None);
         let auto_restore_item = CheckMenuItem::new("覚えた配置を自動復元", true, auto_restore, None);
+        let auto_aspect_item = CheckMenuItem::new("アスペクト比で自動分割", true, auto_aspect, None);
         let columns_menu = Submenu::new("列数（横の分割）", true);
         let columns_items = append_choices(&columns_menu, columns);
         let rows_menu = Submenu::new("行数（縦の分割）", true);
@@ -68,6 +73,7 @@ impl Tray {
         menu.append(&enabled_item).ok()?;
         menu.append(&disable_snap_item).ok()?;
         menu.append(&auto_restore_item).ok()?;
+        menu.append(&auto_aspect_item).ok()?;
         menu.append(&PredefinedMenuItem::separator()).ok()?;
         menu.append(&columns_menu).ok()?;
         menu.append(&rows_menu).ok()?;
@@ -89,6 +95,7 @@ impl Tray {
             id_enabled: enabled_item.id().clone(),
             id_disable_snap: disable_snap_item.id().clone(),
             id_auto_restore: auto_restore_item.id().clone(),
+            id_auto_aspect: auto_aspect_item.id().clone(),
             id_autostart: autostart_item.id().clone(),
             id_open: open_item.id().clone(),
             id_reload: reload_item.id().clone(),
@@ -96,6 +103,7 @@ impl Tray {
             enabled_item,
             disable_snap_item,
             auto_restore_item,
+            auto_aspect_item,
             autostart_item,
             columns_items,
             rows_items,
@@ -112,6 +120,8 @@ impl Tray {
             Some(TrayCommand::ToggleDisableSnap)
         } else if ev.id == self.id_auto_restore {
             Some(TrayCommand::ToggleAutoRestore)
+        } else if ev.id == self.id_auto_aspect {
+            Some(TrayCommand::ToggleAutoAspect)
         } else if ev.id == self.id_autostart {
             Some(TrayCommand::ToggleAutostart)
         } else if ev.id == self.id_open {
@@ -139,6 +149,10 @@ impl Tray {
 
     pub fn set_auto_restore_checked(&self, on: bool) {
         self.auto_restore_item.set_checked(on);
+    }
+
+    pub fn set_auto_aspect_checked(&self, on: bool) {
+        self.auto_aspect_item.set_checked(on);
     }
 
     pub fn set_autostart_checked(&self, autostart: bool) {
