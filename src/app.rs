@@ -21,13 +21,14 @@ use crate::config::{self, Config};
 use crate::hotkey::parse;
 use crate::layout::geometry::Rect;
 use crate::layout::grid::{self, Family, GridSpan};
-use crate::layouts::{self, LearnedLayouts};
+use crate::layouts::{self, LearnedLayouts, Slot};
+use crate::occupancy::Occupancy;
 use crate::tray::{Tray, TrayCommand};
 use crate::watcher::ConfigWatcher;
 use crate::win::guard::Interventability;
 use crate::win::message_window::WM_APP_CONFIG_RELOAD;
 use crate::win::snap::SnapBackup;
-use crate::win::winevent::WinEventHooks;
+use crate::win::winevent::{WinEvent, WinEventHooks};
 use crate::win::{
     autostart, convert, dpi, guard, hotkey as winhotkey, message_window, monitor, snap, winevent,
     window_info, window_ops,
@@ -43,10 +44,8 @@ const RESTORE_MAX_ATTEMPTS: u32 = 3;
 /// 学習データ保存のデバウンス用タイマ ID と遅延。復元タイマ（`RESTORE_TIMER_BASE` 以上）と衝突しない値にする。
 const SAVE_TIMER_ID: usize = 1;
 const SAVE_DEBOUNCE_MS: u32 = 500;
-/// `spans` が無効エントリで膨らむのを防ぐための掃除しきい値（これを超えたら無効分を除去）。
-const SPANS_PRUNE_THRESHOLD: usize = 64;
 /// 1 つの識別キー `(exe, class, app_id)` に貯める学習スロットの上限。超過分は最古から捨てる。
-const LEARNED_SLOTS_PER_KEY: usize = 6;
+const LEARNED_SLOTS_PER_KEY: usize = 8;
 
 // 矢印キーの仮想キーコード（反対方向の同時押し＝最大化を判定するため）。
 const VK_LEFT: i32 = 0x25;
@@ -57,7 +56,7 @@ const VK_DOWN: i32 = 0x28;
 /// 機能 C の遅延リトライ 1 件分の状態。学習した占有範囲を生成直後のウィンドウへ適用する。
 struct RestoreJob {
     hwnd: HWND,
-    span: GridSpan,
+    slot: Slot,
     attempts_left: u32,
 }
 
@@ -69,9 +68,9 @@ pub struct App {
     enabled: bool,
     /// 機能 C: 学習した配置を新規ウィンドウへ自動復元するか。
     auto_restore: bool,
-    /// ウィンドウ(u64)ごとのグリッド占有範囲。矢印キーで更新し、次回操作の起点に使う（一時状態）。
-    spans: HashMap<u64, GridSpan>,
-    /// `(exe, class)` ごとに学習した占有範囲（永続）。`spans` とは別物。
+    /// 実行中のスロット所属（hwnd→スロット）。起点決定・空き判定・解除に使う（非永続）。
+    occupancy: Occupancy,
+    /// `(exe, class, app_id)` ごとに学習した占有スロット（永続）。
     learned: LearnedLayouts,
     layouts_path: PathBuf,
     /// 登録済みホットキー id → アクション。
@@ -106,7 +105,7 @@ pub fn run() -> windows::core::Result<()> {
         auto_restore: config.general.auto_restore,
         config,
         config_path,
-        spans: HashMap::new(),
+        occupancy: Occupancy::default(),
         learned,
         layouts_path,
         actions: HashMap::new(),
@@ -193,7 +192,7 @@ impl App {
             }
             TrayCommand::SetColumns(n) => {
                 self.config.grid.columns = n;
-                self.spans.clear(); // 分割数変更で旧占有範囲は無効になるためリセット
+                self.occupancy = Occupancy::default(); // 分割数変更で旧占有範囲は無効になるためリセット
                 self.persist_config();
                 if let Some(t) = &self.tray {
                     t.set_columns_checked(n);
@@ -202,7 +201,7 @@ impl App {
             }
             TrayCommand::SetRows(n) => {
                 self.config.grid.rows = n;
-                self.spans.clear();
+                self.occupancy = Occupancy::default();
                 self.persist_config();
                 if let Some(t) = &self.tray {
                     t.set_rows_checked(n);
@@ -220,7 +219,7 @@ impl App {
             }
             TrayCommand::ToggleAutoAspect => {
                 self.config.grid.auto_aspect = !self.config.grid.auto_aspect;
-                self.spans.clear(); // 分割数が変わるため旧占有範囲をリセット
+                self.occupancy = Occupancy::default(); // 分割数が変わるため旧占有範囲をリセット
                 self.persist_config();
                 if let Some(t) = &self.tray {
                     t.set_auto_aspect_checked(self.config.grid.auto_aspect);
@@ -371,37 +370,22 @@ impl App {
         Some((base, work, cols, rows))
     }
 
-    /// 占有範囲を保存しつつウィンドウへ適用し、`(exe, class)` 単位で学習する。
-    ///
-    /// ユーザーの矢印操作からのみ呼ばれる（自動復元はこの経路を通らないため、復元が学習を上書きしない）。
     fn set_span(&mut self, hwnd: HWND, span: GridSpan, cols: u32, rows: u32, work: Rect) {
-        // 直前にこの窓へ適用していた占有範囲を取り出してから上書きする。これを学習の old_span に渡し、
-        // 同じ窓の動かし直しを新規スロットの追加ではなく既存スロットの置き換えとして扱う。
-        let old_span = self.spans.insert(convert::hwnd_to_u64(hwnd), span);
-        if self.spans.len() > SPANS_PRUNE_THRESHOLD {
-            self.prune_spans();
-        }
         if let Err(e) = window_ops::set_window_rect(hwnd, span.rect(cols, rows, work)) {
             tracing::warn!("set_span: set_window_rect failed: {e}");
         }
-        self.learn(hwnd, span, old_span);
+        self.learn(hwnd, span, cols, rows);
     }
 
-    /// 既に存在しないウィンドウの `spans` エントリを掃除する（長期常駐での単調増加を防ぐ）。
-    fn prune_spans(&mut self) {
-        self.spans
-            .retain(|&id, _| window_ops::is_window(convert::u64_to_hwnd(id)));
-    }
-
-    /// ユーザー操作で確定した占有範囲を識別キー単位で学習し、保存を予約する。`old_span` はこの窓へ
-    /// 直前に適用していた範囲で、同じ窓の動かし直しを既存スロットの置き換えとして扱うために渡す。
-    ///
-    /// 保存はデバウンスする（矢印連打で `layouts.toml` 書き込みが多発しないよう、最後の 1 回に合流させる）。
-    fn learn(&mut self, hwnd: HWND, span: GridSpan, old_span: Option<GridSpan>) {
-        let Some(key) = window_info::window_key(hwnd) else {
-            return;
-        };
-        self.learned.learn(&key, span, old_span, LEARNED_SLOTS_PER_KEY);
+    /// ユーザー操作で確定した占有範囲を、現在モニタの Slot として学習し所属を更新する。保存はデバウンス。
+    fn learn(&mut self, hwnd: HWND, span: GridSpan, cols: u32, rows: u32) {
+        let Some(key) = window_info::window_key(hwnd) else { return };
+        let Some(mon) = monitor::monitor_for_window(hwnd) else { return };
+        let slot = Slot { display: mon.display, span, cols, rows };
+        let id = convert::hwnd_to_u64(hwnd);
+        let old = self.occupancy.entry_of(id).map(|(_, s)| s);
+        self.learned.learn(&key, slot.clone(), old, LEARNED_SLOTS_PER_KEY);
+        self.occupancy.on_placed(id, key, slot);
         self.schedule_layouts_save();
     }
 
@@ -427,13 +411,13 @@ impl App {
 
     /// このウィンドウの起点となる占有範囲を決める。
     ///
-    /// 保存済みの範囲があり、その矩形が現在のウィンドウ矩形とほぼ一致すれば（＝直前に自分が配置した）
-    /// それを使う。手動で動かされた／初回などで一致しなければ、現在位置から推定する。
+    /// 直前に自分が配置した所属スロットがあり、その矩形が現在矩形とほぼ一致すればそれを再利用する。
+    /// 手動で動かされた・初回などで一致しなければ、現在位置から推定する。
     fn span_for(&self, hwnd: HWND, work: Rect, current: Rect, cols: u32, rows: u32) -> GridSpan {
-        let key = convert::hwnd_to_u64(hwnd);
-        if let Some(&saved) = self.spans.get(&key) {
-            if saved.rect(cols, rows, work).approx_eq(current, SPAN_REUSE_TOLERANCE_PX) {
-                return saved;
+        let id = convert::hwnd_to_u64(hwnd);
+        if let Some((_, slot)) = self.occupancy.entry_of(id) {
+            if slot.span.rect(cols, rows, work).approx_eq(current, SPAN_REUSE_TOLERANCE_PX) {
+                return slot.span;
             }
         }
         grid::estimate_span(work, current, cols, rows)
@@ -460,14 +444,23 @@ impl App {
 
     // ── 機能 C: ウィンドウイベント → 学習配置の自動復元 ─────────────────
     fn on_winevents(&mut self) {
-        // キューは常に drain して滞留を防ぐ。自動復元が無効／学習データが空なら以降の重い処理（window_key 等）は省く。
         let events = winevent::drain_events();
-        if events.is_empty() || !self.enabled || !self.auto_restore || self.learned.is_empty() {
+        if events.is_empty() {
             return;
         }
-        for raw in events {
-            let hwnd = convert::u64_to_hwnd(raw);
-            self.maybe_schedule_restore(hwnd);
+        self.prune_occupancy(); // 死んだ窓の所属を掃除してから処理する
+        if !self.enabled {
+            return;
+        }
+        for ev in events {
+            match ev {
+                WinEvent::Created(raw) => {
+                    if self.auto_restore && !self.learned.is_empty() {
+                        self.maybe_schedule_restore(convert::u64_to_hwnd(raw));
+                    }
+                }
+                WinEvent::MoveSizeEnd(raw) => self.maybe_release(convert::u64_to_hwnd(raw)),
+            }
         }
     }
 
@@ -478,30 +471,50 @@ impl App {
             return;
         }
         // ここで初めて OpenProcess（exe 取得）。除外判定と学習照合で同じ key を使い回す（二重取得しない）。
-        let Some(key) = window_info::window_key(hwnd) else {
-            return;
-        };
+        let Some(key) = window_info::window_key(hwnd) else { return };
         if self.config.exclusions.excludes(&key.exe) {
             return;
         }
-        // 当面は最後に学習したスロット（最新の配置）へ復元し、従来の last-wins 挙動を保つ。
-        // 複数スロットを新規窓へ割り振る配分は今後の課題。
-        let Some(span) = self.learned.slots(&key).last().copied() else {
-            return;
+        let recorded = self.learned.slots(&key);
+        if recorded.is_empty() {
+            return; // 記録に無い識別子は動かさない
+        }
+        let Some(slot) = self.occupancy.pick_slot(&key, &recorded) else {
+            return; // 空きスロットなし → 自由
         };
+        // 復元で占有することを予約し、続けて生成される同識別子の窓が同じスロットを選ばないようにする。
+        self.occupancy.on_placed(convert::hwnd_to_u64(hwnd), key, slot.clone());
         let id = self.next_timer_id;
         self.next_timer_id += 1;
         unsafe {
             SetTimer(Some(self.hwnd), id, RESTORE_DELAY_MS, None);
         }
-        self.restore_jobs.insert(
-            id,
-            RestoreJob {
-                hwnd,
-                span,
-                attempts_left: RESTORE_MAX_ATTEMPTS,
-            },
-        );
+        self.restore_jobs.insert(id, RestoreJob { hwnd, slot, attempts_left: RESTORE_MAX_ATTEMPTS });
+    }
+
+    /// ユーザーがドラッグ/リサイズで所属スロットから外したら、所属と記録の双方から外す。
+    ///
+    /// ウィンドウは動かさない（内部状態と記録の更新のみ）。
+    fn maybe_release(&mut self, hwnd: HWND) {
+        let id = convert::hwnd_to_u64(hwnd);
+        let Some((key, slot)) = self.occupancy.entry_of(id) else { return };
+        // 記録ディスプレイが現存しないときは解除判定をしない（復元側 apply_learned_slot と対称）。
+        // 別モニタの作業領域で誤比較し、切断中に学習を消してしまうのを防ぐ。
+        let Some(mon) = monitor::monitor_by_name(&slot.display) else { return };
+        let target = slot.span.clamp_to(slot.cols, slot.rows).rect(slot.cols, slot.rows, mon.work_area);
+        let Some(cur) = window_ops::window_visible_rect(hwnd) else { return };
+        if !cur.approx_eq(target, SPAN_REUSE_TOLERANCE_PX) {
+            self.occupancy.on_released(id);
+            self.learned.forget(&key, &slot);
+            self.schedule_layouts_save();
+        }
+    }
+
+    /// 既に存在しないウィンドウの所属を掃除する（長期常駐での単調増加を防ぐ）。
+    /// 掃除は `on_winevents` 先頭の 1 か所に集約する（WinEvent が来たついでに回す）。
+    fn prune_occupancy(&mut self) {
+        self.occupancy
+            .prune(|id| window_ops::is_window(convert::u64_to_hwnd(id)));
     }
 
     fn on_timer(&mut self, timer_id: usize) {
@@ -516,11 +529,11 @@ impl App {
             return;
         };
         let hwnd = job.hwnd;
-        let span = job.span;
+        let slot = job.slot.clone();
         job.attempts_left = job.attempts_left.saturating_sub(1);
         let attempts_left = job.attempts_left;
 
-        let converged = self.apply_learned_span(hwnd, span);
+        let converged = self.apply_learned_slot(hwnd, &slot);
 
         if converged || attempts_left == 0 {
             unsafe {
@@ -530,19 +543,18 @@ impl App {
         }
     }
 
-    /// 学習した占有範囲を、ウィンドウの現在モニタの作業領域へ適用する。
+    /// 学習スロットを、そのスロットのディスプレイの作業領域へ適用する。
     ///
-    /// 現在のグリッド分割数に合わせて範囲外インデックスをクランプする（分割数が学習時から変わっていても破綻しない）。
-    /// 適用後に目標とほぼ一致すれば `true`（収束＝リトライ終了）。対象モニタを取得できなければ `true`（打ち切り）。
-    fn apply_learned_span(&self, hwnd: HWND, span: GridSpan) -> bool {
-        let Some(mon) = monitor::monitor_for_window(hwnd) else {
-            return true;
+    /// 記録時の分割数でグリッドを解釈し、現在その分割数が変わっていても clamp_to で丸める。対象ディスプレイが
+    /// 現存しなければ何もしない（収束扱いで打ち切り）。適用後に目標とほぼ一致すれば `true`。
+    fn apply_learned_slot(&self, hwnd: HWND, slot: &Slot) -> bool {
+        let Some(mon) = monitor::monitor_by_name(&slot.display) else {
+            return true; // ディスプレイが無い → 復元しない（打ち切り）
         };
-        let (cols, rows) = self.grid_dims_for(&mon);
-        let target = span.clamp_to(cols, rows).rect(cols, rows, mon.work_area);
+        let target = slot.span.clamp_to(slot.cols, slot.rows).rect(slot.cols, slot.rows, mon.work_area);
         window_ops::restore_if_maximized(hwnd);
         if let Err(e) = window_ops::set_window_rect(hwnd, target) {
-            tracing::warn!("apply_learned_span: set_window_rect failed: {e}");
+            tracing::warn!("apply_learned_slot: set_window_rect failed: {e}");
         }
         window_ops::window_visible_rect(hwnd)
             .map(|cur| cur.approx_eq(target, CONVERGE_TOLERANCE_PX))
@@ -557,7 +569,7 @@ impl App {
                 self.config = cfg;
                 self.enabled = self.config.general.enabled;
                 self.auto_restore = self.config.general.auto_restore;
-                self.spans.clear(); // 分割数が変わっている可能性があるため占有範囲をリセット
+                self.occupancy = Occupancy::default(); // 分割数が変わっている可能性があるため所属をリセット
                 self.register_hotkeys();
                 self.apply_snap_setting();
                 self.sync_tray();

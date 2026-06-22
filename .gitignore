@@ -11,3 +11,6 @@
 *.log
 
 # Cargo.lock はアプリ（バイナリ）のためコミットする。ここでは無視しない。
+
+# Claude
+docs/superpowers/

@@ -26,6 +26,8 @@
 | `GetWindowThreadProcessId` | HWND から所有プロセスの PID を得ます。ハンドルは開きません。 |
 | `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW` | 実行ファイルのパスを読むだけです。`PROCESS_QUERY_LIMITED_INFORMATION` はメモリ読み書き権を含まない最小権限です（次節）。 |
 | `SHQueryUserNotificationState` | フルスクリーン・排他状態を調べる非特権のシェル API。昇格もフックも要りません。 |
+| `SHGetPropertyStoreForWindow` | ウィンドウのプロパティ（AUMID）を読むシェル API。対象プロセスを開かず、注入もメモリ操作もしません。非昇格で動きます。学習キーで PWA と通常ブラウザを分けるために使います。 |
+| `SetWinEventHook`（`EVENT_SYSTEM_MOVESIZEEND`） | 生成監視と同じ out-of-context 方式で、注入はありません。ユーザーのドラッグ・リサイズ完了時だけ発火し、自分の `SetWindowPos` では発火しません。学習配置からの離脱（所属解除）の判定に使い、ウィンドウは動かしません。 |
 
 逆に使わない API は前節のとおりです。とくに `ReadProcessMemory` / `WriteProcessMemory` と `PROCESS_VM_*` 権、`OpenProcess(PROCESS_QUERY_INFORMATION)` や `PROCESS_ALL_ACCESS` のような広い権限は、便利でも持ち込みません。
 

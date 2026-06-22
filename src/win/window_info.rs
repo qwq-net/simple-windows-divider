@@ -1,25 +1,63 @@
-//! ウィンドウの識別情報（exe / class）取得。
+//! ウィンドウの識別情報（exe / class / AUMID）取得。
 //!
 //! プロセス情報は `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` ＋ `QueryFullProcessImageNameW` の
 //! 範囲に留め、`ReadProcessMemory` 等の侵襲的 API は一切使わない（アンチチート安全）。
+//! AUMID はシェルのプロパティストア（`SHGetPropertyStoreForWindow`）経由で取得するため
+//! 対象プロセスを開かない。
 
-use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HWND};
+use windows::core::{GUID, PWSTR};
+use windows::Win32::Foundation::{CloseHandle, HWND, PROPERTYKEY};
+use windows::Win32::System::Com::CoTaskMemFree;
+use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowThreadProcessId};
 
 use crate::layouts::WindowKey;
 
+/// System.AppUserModel.ID（{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}, pid=5）
+const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0x9F4C2855_9F79_4B39_A8D0_E1D42DE1D5F3),
+    pid: 5,
+};
+
 /// ウィンドウの識別情報を取得する。exe を解決できなければ `None`
 /// （対象プロセスにアクセスできない／既に消えている等）。`exe` は basename を小文字化して返す。
 ///
-/// `app_id`（AUMID）は現状では未取得のため空文字列を入れる。空のまま学習・照合しても
-/// `(exe, class)` 単位の従来挙動と一致する（[`crate::layouts`] は app_id="" を旧データとして扱う）。
+/// `app_id` は AUMID（AppUserModelID）。取得できないウィンドウでは空文字列を返す
+/// （多くの通常ウィンドウは AUMID を持たないため空になる）。
 pub fn window_key(hwnd: HWND) -> Option<WindowKey> {
     let exe = process_exe_basename(hwnd)?;
-    Some(WindowKey { exe, class: class_name(hwnd), app_id: String::new() })
+    Some(WindowKey { exe, class: class_name(hwnd), app_id: window_app_id(hwnd) })
+}
+
+/// 指定ウィンドウの AUMID（AppUserModelID）。取得できなければ空文字列を返す。
+///
+/// シェルのプロパティストアを読むだけで、対象プロセスは開かない（注入・メモリアクセスなし）。
+/// API 失敗・プロパティ未設定・型不一致のいずれでも空文字列を返す。AUMID はログに出さない。
+fn window_app_id(hwnd: HWND) -> String {
+    unsafe {
+        let store: IPropertyStore = match SHGetPropertyStoreForWindow(hwnd) {
+            Ok(s) => s,
+            Err(_) => return String::new(),
+        };
+        let value = match store.GetValue(&PKEY_APP_USER_MODEL_ID) {
+            Ok(v) => v,
+            Err(_) => return String::new(),
+        };
+        // PROPVARIANT の Drop が PropVariantClear を呼ぶため、value はここでスコープを抜けると解放される。
+        // PropVariantToStringAlloc は VT_LPWSTR / VT_BSTR 等を統一的に文字列化する。
+        // 戻り値の PWSTR は CoTaskMemFree で解放する必要がある。
+        let pwstr: PWSTR = match PropVariantToStringAlloc(&value) {
+            Ok(p) => p,
+            Err(_) => return String::new(),
+        };
+        let result = pwstr.to_string().unwrap_or_default();
+        CoTaskMemFree(Some(pwstr.as_ptr() as *const _));
+        result
+    }
 }
 
 fn class_name(hwnd: HWND) -> String {

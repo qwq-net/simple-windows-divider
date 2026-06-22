@@ -19,6 +19,7 @@ pub mod fsutil;
 pub mod hotkey;
 pub mod layout;
 pub mod layouts;
+pub mod occupancy;
 pub mod window_style;
 
 // ── Win32 副作用ポート層・配線（Windows ターゲットでのみコンパイル） ──
