@@ -1,6 +1,6 @@
 //! Win32 を直接叩く副作用ポート層（Windows ターゲット専用）。
 //!
-//! 純ロジック（[`crate::layout`] / [`crate::hotkey`] / [`crate::rules`]）の中立型と Win32 型の橋渡しを行う。
+//! 純ロジック（[`crate::layout`] / [`crate::hotkey`] / [`crate::layouts`]）の中立型と Win32 型の橋渡しを行う。
 //! 使う API は **文書化済みのユーザーモード関数のみ**（`RegisterHotKey` / `SetWinEventHook`(out-of-context) /
 //! `SetWindowPos` / `EnumWindows` 等）。他プロセスへの DLL 注入・メモリ操作・低レベル入力フックは使わない。
 

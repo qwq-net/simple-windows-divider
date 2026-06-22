@@ -21,6 +21,23 @@ pub enum Family {
     Bottom,
 }
 
+impl Family {
+    /// 水平軸（左右）の方向か。反対方向同時押し時に横軸フル/縦軸フルのどちらにするかを選ぶのに使う。
+    pub fn is_horizontal(self) -> bool {
+        matches!(self, Family::Left | Family::Right)
+    }
+
+    /// 反対方向（←↔→、↑↔↓）。反対方向の同時押し（最大化トリガ）を検出するのに使う。
+    pub fn opposite(self) -> Family {
+        match self {
+            Family::Left => Family::Right,
+            Family::Right => Family::Left,
+            Family::Top => Family::Bottom,
+            Family::Bottom => Family::Top,
+        }
+    }
+}
+
 /// グリッド上の占有範囲。列 `l..=r`、行 `t..=b`（いずれも 0 始まり・両端含む、`l<=r`・`t<=b`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct GridSpan {
@@ -230,6 +247,22 @@ mod tests {
         assert_eq!(grid_for_aspect(1000, 1000), (2, 2)); // ちょうど 1.0（正方形）
         assert_eq!(grid_for_aspect(999, 1000), (1, 2)); // 1.0 未満
         assert_eq!(grid_for_aspect(1920, 0), (4, 2)); // height=0 でもパニックしない
+    }
+
+    #[test]
+    fn family_is_horizontal_classifies() {
+        assert!(Family::Left.is_horizontal());
+        assert!(Family::Right.is_horizontal());
+        assert!(!Family::Top.is_horizontal());
+        assert!(!Family::Bottom.is_horizontal());
+    }
+
+    #[test]
+    fn family_opposite_pairs_arrows() {
+        assert_eq!(Family::Left.opposite(), Family::Right);
+        assert_eq!(Family::Right.opposite(), Family::Left);
+        assert_eq!(Family::Top.opposite(), Family::Bottom);
+        assert_eq!(Family::Bottom.opposite(), Family::Top);
     }
 
     fn mon(left: i32, top: i32, right: i32, bottom: i32) -> Rect {

@@ -75,11 +75,7 @@ fn is_fullscreen_context(hwnd: HWND) -> bool {
         window_ops::window_rect(hwnd),
         monitor::monitor_for_window(hwnd),
     ) {
-        if win.left <= mon.full.left
-            && win.top <= mon.full.top
-            && win.right >= mon.full.right
-            && win.bottom >= mon.full.bottom
-        {
+        if win.covers(mon.full) {
             return true;
         }
     }

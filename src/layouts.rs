@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::layout::geometry::Rect;
 use crate::layout::grid::GridSpan;
 
 /// 学習データの識別キー。`exe` は実行ファイル basename を小文字化したもの、`class` はウィンドウクラス名、
@@ -31,6 +32,18 @@ pub struct Slot {
     pub span: GridSpan,
     pub cols: u32,
     pub rows: u32,
+}
+
+impl Slot {
+    /// このスロットを作業領域 `work` 上の実矩形へ変換する。
+    ///
+    /// 記録時の分割数 `cols`/`rows` でグリッドを解釈し、現在の分割数が変わっていても [`GridSpan::clamp_to`]
+    /// で範囲外インデックスを丸めてから矩形化する。復元の適用とドラッグ解除の判定が同じ目標矩形を得るために
+    /// 使う（両者が一致することが、解除判定で学習を誤って消さないための前提になる）。`work` は対象ディスプレイの
+    /// 作業領域。副作用なし。
+    pub fn target_rect(&self, work: Rect) -> Rect {
+        self.span.clamp_to(self.cols, self.rows).rect(self.cols, self.rows, work)
+    }
 }
 
 /// 学習した識別子→スロット集合。TOML には `[[layout]]` の並びで保存する。
@@ -145,6 +158,31 @@ mod tests {
     }
     fn slot(display: &str, l: u32, r: u32, t: u32, b: u32, cols: u32, rows: u32) -> Slot {
         Slot { display: display.into(), span: GridSpan { l, r, t, b }, cols, rows }
+    }
+
+    #[test]
+    fn target_rect_matches_grid_cell() {
+        // 3×2 の左2列・全行（■■□/■■□）= 幅 2/3・全高。
+        let work = Rect { left: 0, top: 0, right: 1200, bottom: 800 };
+        let s = slot("\\\\.\\DISPLAY1", 0, 1, 0, 1, 3, 2);
+        assert_eq!(s.target_rect(work), Rect { left: 0, top: 0, right: 800, bottom: 800 });
+    }
+
+    #[test]
+    fn target_rect_clamps_shrunk_grid() {
+        // 3×2 で記録した右下 (2,2,1,1) を 2×1 グリッドへ → 右端=1・下端=0 に丸めてから矩形化。
+        let work = Rect { left: 0, top: 0, right: 1000, bottom: 600 };
+        let s = slot("\\\\.\\DISPLAY1", 2, 2, 1, 1, 2, 1);
+        // clamp_to(2,1) → (1,1,0,0) = 右半分・全高。
+        assert_eq!(s.target_rect(work), Rect { left: 500, top: 0, right: 1000, bottom: 600 });
+    }
+
+    #[test]
+    fn target_rect_respects_work_origin() {
+        // 作業領域が非ゼロ原点（セカンダリモニタ）でもオフセットを保つ。
+        let work = Rect { left: 1920, top: 0, right: 1920 + 1280, bottom: 1024 };
+        let s = slot("\\\\.\\DISPLAY2", 1, 1, 0, 1, 2, 2); // 右列・全高
+        assert_eq!(s.target_rect(work), Rect { left: 1920 + 640, top: 0, right: 1920 + 1280, bottom: 1024 });
     }
 
     #[test]

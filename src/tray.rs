@@ -10,6 +10,17 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 /// 列数・行数としてメニューに並べる選択肢。
 const SPLIT_CHOICES: &[u32] = &[1, 2, 3, 4, 5, 6];
 
+/// トレイのチェック表示へ反映する状態のスナップショット。生成時の初期表示と、変更後の同期に使う。
+pub struct TrayView {
+    pub enabled: bool,
+    pub disable_snap: bool,
+    pub auto_restore: bool,
+    pub auto_aspect: bool,
+    pub autostart: bool,
+    pub columns: u32,
+    pub rows: u32,
+}
+
 /// トレイメニューから発生する操作。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TrayCommand {
@@ -46,28 +57,20 @@ pub struct Tray {
 }
 
 impl Tray {
-    /// トレイを生成する。現在の状態（有効・スナップ無効・自動復元・自動起動・列数・行数）を初期表示に反映する。
-    pub fn new(
-        enabled: bool,
-        autostart: bool,
-        disable_snap: bool,
-        auto_restore: bool,
-        auto_aspect: bool,
-        columns: u32,
-        rows: u32,
-    ) -> Option<Tray> {
+    /// トレイを生成する。`view` の状態（有効・スナップ無効・自動復元・自動起動・列数・行数）を初期表示に反映する。
+    pub fn new(view: &TrayView) -> Option<Tray> {
         let menu = Menu::new();
-        let enabled_item = CheckMenuItem::new("ウィンドウ管理を有効化", true, enabled, None);
-        let disable_snap_item = CheckMenuItem::new("標準スナップを無効化", true, disable_snap, None);
-        let auto_restore_item = CheckMenuItem::new("覚えた配置を自動復元", true, auto_restore, None);
-        let auto_aspect_item = CheckMenuItem::new("アスペクト比で自動分割", true, auto_aspect, None);
+        let enabled_item = CheckMenuItem::new("ウィンドウ管理を有効化", true, view.enabled, None);
+        let disable_snap_item = CheckMenuItem::new("標準スナップを無効化", true, view.disable_snap, None);
+        let auto_restore_item = CheckMenuItem::new("覚えた配置を自動復元", true, view.auto_restore, None);
+        let auto_aspect_item = CheckMenuItem::new("アスペクト比で自動分割", true, view.auto_aspect, None);
         let columns_menu = Submenu::new("列数（横の分割）", true);
-        let columns_items = append_choices(&columns_menu, columns);
+        let columns_items = append_choices(&columns_menu, view.columns);
         let rows_menu = Submenu::new("行数（縦の分割）", true);
-        let rows_items = append_choices(&rows_menu, rows);
+        let rows_items = append_choices(&rows_menu, view.rows);
         let open_item = MenuItem::new("設定ファイルを開く", true, None);
         let reload_item = MenuItem::new("設定を再読み込み", true, None);
-        let autostart_item = CheckMenuItem::new("ログオン時に自動起動", true, autostart, None);
+        let autostart_item = CheckMenuItem::new("ログオン時に自動起動", true, view.autostart, None);
         let quit_item = MenuItem::new("終了", true, None);
 
         menu.append(&enabled_item).ok()?;
@@ -139,34 +142,15 @@ impl Tray {
         }
     }
 
-    pub fn set_enabled_checked(&self, enabled: bool) {
-        self.enabled_item.set_checked(enabled);
-    }
-
-    pub fn set_disable_snap_checked(&self, on: bool) {
-        self.disable_snap_item.set_checked(on);
-    }
-
-    pub fn set_auto_restore_checked(&self, on: bool) {
-        self.auto_restore_item.set_checked(on);
-    }
-
-    pub fn set_auto_aspect_checked(&self, on: bool) {
-        self.auto_aspect_item.set_checked(on);
-    }
-
-    pub fn set_autostart_checked(&self, autostart: bool) {
-        self.autostart_item.set_checked(autostart);
-    }
-
-    /// 列数の選択チェックを `value` に合わせる（他は外す）。
-    pub fn set_columns_checked(&self, value: u32) {
-        check_only(&self.columns_items, value);
-    }
-
-    /// 行数の選択チェックを `value` に合わせる。
-    pub fn set_rows_checked(&self, value: u32) {
-        check_only(&self.rows_items, value);
+    /// メニューのチェック表示を `view` の状態へ一括で合わせる。設定の直接編集やメニュー操作後の同期に使う。
+    pub fn apply(&self, view: &TrayView) {
+        self.enabled_item.set_checked(view.enabled);
+        self.disable_snap_item.set_checked(view.disable_snap);
+        self.auto_restore_item.set_checked(view.auto_restore);
+        self.auto_aspect_item.set_checked(view.auto_aspect);
+        self.autostart_item.set_checked(view.autostart);
+        check_only(&self.columns_items, view.columns);
+        check_only(&self.rows_items, view.rows);
     }
 }
 

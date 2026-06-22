@@ -66,6 +66,19 @@ impl Rect {
             && (self.right - other.right).abs() <= tol
             && (self.bottom - other.bottom).abs() <= tol
     }
+
+    /// 自身が `outer` を四辺すべてで覆う（完全に含む）か。辺がちょうど一致する場合も覆うとみなす。
+    ///
+    /// 各辺で `self.left <= outer.left`・`self.top <= outer.top`・`self.right >= outer.right`・
+    /// `self.bottom >= outer.bottom` がすべて成り立てば `true`。ウィンドウ矩形がモニタ全体を覆うか
+    /// （フルスクリーン相当か）を見るために使う。各辺は独立に判定するため、1 辺でも内側に収まれば `false`。
+    /// 副作用なし。
+    pub fn covers(&self, outer: Rect) -> bool {
+        self.left <= outer.left
+            && self.top <= outer.top
+            && self.right >= outer.right
+            && self.bottom >= outer.bottom
+    }
 }
 
 #[cfg(test)]
@@ -142,5 +155,45 @@ mod tests {
         assert!(a.approx_eq(Rect { left: 2, top: -2, right: 98, bottom: 102 }, 2));
         // 1 辺でも許容を超えれば不一致（bottom の差 3 > tol=2）。
         assert!(!a.approx_eq(Rect { left: 0, top: 0, right: 100, bottom: 103 }, 2));
+    }
+
+    #[test]
+    fn covers_exact_is_true() {
+        // 全辺がちょうど一致（等号境界）→ 覆うとみなす。フルスクリーン判定の要。
+        let mon = Rect { left: 0, top: 0, right: 1920, bottom: 1080 };
+        assert!(mon.covers(mon));
+    }
+
+    #[test]
+    fn covers_larger_window_is_true() {
+        let mon = Rect { left: 0, top: 0, right: 1920, bottom: 1080 };
+        // モニタからはみ出すウィンドウ（枠が外側）→ 覆う。
+        let win = Rect { left: -8, top: -8, right: 1928, bottom: 1088 };
+        assert!(win.covers(mon));
+    }
+
+    #[test]
+    fn covers_smaller_window_is_false() {
+        let mon = Rect { left: 0, top: 0, right: 1920, bottom: 1080 };
+        // 内側に収まるウィンドウ → 覆わない。
+        let win = Rect { left: 100, top: 100, right: 800, bottom: 600 };
+        assert!(!win.covers(mon));
+    }
+
+    #[test]
+    fn covers_one_edge_short_is_false() {
+        let mon = Rect { left: 0, top: 0, right: 1920, bottom: 1080 };
+        // 3 辺は覆うが bottom が 1px 足りない → 覆わない（各辺は独立判定）。
+        let win = Rect { left: 0, top: 0, right: 1920, bottom: 1079 };
+        assert!(!win.covers(mon));
+    }
+
+    #[test]
+    fn covers_on_nonzero_origin_monitor() {
+        // セカンダリモニタ（原点 x=1920）でも正しく判定する。
+        let mon = Rect { left: 1920, top: 0, right: 1920 + 2560, bottom: 1440 };
+        assert!(mon.covers(mon));
+        let inside = Rect { left: 2000, top: 100, right: 3000, bottom: 1000 };
+        assert!(!inside.covers(mon));
     }
 }
