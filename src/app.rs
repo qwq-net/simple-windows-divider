@@ -45,6 +45,8 @@ const SAVE_TIMER_ID: usize = 1;
 const SAVE_DEBOUNCE_MS: u32 = 500;
 /// `spans` が無効エントリで膨らむのを防ぐための掃除しきい値（これを超えたら無効分を除去）。
 const SPANS_PRUNE_THRESHOLD: usize = 64;
+/// 1 つの識別キー `(exe, class, app_id)` に貯める学習スロットの上限。超過分は最古から捨てる。
+const LEARNED_SLOTS_PER_KEY: usize = 6;
 
 // 矢印キーの仮想キーコード（反対方向の同時押し＝最大化を判定するため）。
 const VK_LEFT: i32 = 0x25;
@@ -373,14 +375,16 @@ impl App {
     ///
     /// ユーザーの矢印操作からのみ呼ばれる（自動復元はこの経路を通らないため、復元が学習を上書きしない）。
     fn set_span(&mut self, hwnd: HWND, span: GridSpan, cols: u32, rows: u32, work: Rect) {
-        self.spans.insert(convert::hwnd_to_u64(hwnd), span);
+        // 直前にこの窓へ適用していた占有範囲を取り出してから上書きする。これを学習の old_span に渡し、
+        // 同じ窓の動かし直しを新規スロットの追加ではなく既存スロットの置き換えとして扱う。
+        let old_span = self.spans.insert(convert::hwnd_to_u64(hwnd), span);
         if self.spans.len() > SPANS_PRUNE_THRESHOLD {
             self.prune_spans();
         }
         if let Err(e) = window_ops::set_window_rect(hwnd, span.rect(cols, rows, work)) {
             tracing::warn!("set_span: set_window_rect failed: {e}");
         }
-        self.learn(hwnd, span);
+        self.learn(hwnd, span, old_span);
     }
 
     /// 既に存在しないウィンドウの `spans` エントリを掃除する（長期常駐での単調増加を防ぐ）。
@@ -389,14 +393,15 @@ impl App {
             .retain(|&id, _| window_ops::is_window(convert::u64_to_hwnd(id)));
     }
 
-    /// ユーザー操作で確定した占有範囲を `(exe, class)` 単位で学習し、保存を予約する。
+    /// ユーザー操作で確定した占有範囲を識別キー単位で学習し、保存を予約する。`old_span` はこの窓へ
+    /// 直前に適用していた範囲で、同じ窓の動かし直しを既存スロットの置き換えとして扱うために渡す。
     ///
     /// 保存はデバウンスする（矢印連打で `layouts.toml` 書き込みが多発しないよう、最後の 1 回に合流させる）。
-    fn learn(&mut self, hwnd: HWND, span: GridSpan) {
+    fn learn(&mut self, hwnd: HWND, span: GridSpan, old_span: Option<GridSpan>) {
         let Some(key) = window_info::window_key(hwnd) else {
             return;
         };
-        self.learned.record(&key, span);
+        self.learned.learn(&key, span, old_span, LEARNED_SLOTS_PER_KEY);
         self.schedule_layouts_save();
     }
 
@@ -479,7 +484,9 @@ impl App {
         if self.config.exclusions.excludes(&key.exe) {
             return;
         }
-        let Some(span) = self.learned.lookup(&key) else {
+        // 当面は最後に学習したスロット（最新の配置）へ復元し、従来の last-wins 挙動を保つ。
+        // 複数スロットを新規窓へ割り振る配分は今後の課題。
+        let Some(span) = self.learned.slots(&key).last().copied() else {
             return;
         };
         let id = self.next_timer_id;

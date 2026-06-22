@@ -14,9 +14,12 @@ use crate::layouts::WindowKey;
 
 /// ウィンドウの識別情報を取得する。exe を解決できなければ `None`
 /// （対象プロセスにアクセスできない／既に消えている等）。`exe` は basename を小文字化して返す。
+///
+/// `app_id`（AUMID）は現状では未取得のため空文字列を入れる。空のまま学習・照合しても
+/// `(exe, class)` 単位の従来挙動と一致する（[`crate::layouts`] は app_id="" を旧データとして扱う）。
 pub fn window_key(hwnd: HWND) -> Option<WindowKey> {
     let exe = process_exe_basename(hwnd)?;
-    Some(WindowKey { exe, class: class_name(hwnd) })
+    Some(WindowKey { exe, class: class_name(hwnd), app_id: String::new() })
 }
 
 fn class_name(hwnd: HWND) -> String {
