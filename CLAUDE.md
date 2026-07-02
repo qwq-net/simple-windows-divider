@@ -4,15 +4,16 @@ windows-divider は Windows 11 常駐型のウィンドウ管理ツールです�
 
 ## コマンド
 
+基本操作は Taskfile（[go-task](https://taskfile.dev)）経由で行います。`task` で一覧、`task <name>` で実行します。
+
 ```bash
-cargo test                                  # 純ロジックのユニットテスト + doctest（どの OS でも可）
-cargo clippy --all-targets                  # 既定ターゲットの lint
-cargo check  --target x86_64-pc-windows-gnu # Windows 依存コードの型チェック
-cargo clippy --target x86_64-pc-windows-gnu # Windows 依存コードの lint
-cargo build  --release                      # 実機 Windows（MSVC）でのビルド
+task test   # テスト（純ロジックのユニットテスト + doctest／どの OS でも可）
+task lint   # clippy（既定ターゲット + x86_64-pc-windows-gnu、いずれも -D warnings）
+task build  # リリースビルド（cargo build --release）
+task ci     # CI 相当（test + lint）
 ```
 
-ビルドの詳細（クロスビルド・マニフェスト・実機確認手順）は [docs/build-and-test.md](docs/build-and-test.md) を参照してください。
+型チェックだけ素早く回したいときは素の `cargo check --target x86_64-pc-windows-gnu` を使ってもかまいません。ビルドの詳細（クロスビルド・マニフェスト・実機確認手順）は [docs/build-and-test.md](docs/build-and-test.md) を参照してください。
 
 ## 守る不変条件
 
