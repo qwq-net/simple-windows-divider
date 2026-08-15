@@ -14,7 +14,6 @@ const SPLIT_CHOICES: &[u32] = &[1, 2, 3, 4, 5, 6];
 pub struct TrayView {
     pub enabled: bool,
     pub disable_snap: bool,
-    pub auto_restore: bool,
     pub auto_aspect: bool,
     pub autostart: bool,
     pub columns: u32,
@@ -26,7 +25,6 @@ pub struct TrayView {
 pub enum TrayCommand {
     ToggleEnabled,
     ToggleDisableSnap,
-    ToggleAutoRestore,
     ToggleAutoAspect,
     SetColumns(u32),
     SetRows(u32),
@@ -41,14 +39,12 @@ pub struct Tray {
     _tray: TrayIcon,
     enabled_item: CheckMenuItem,
     disable_snap_item: CheckMenuItem,
-    auto_restore_item: CheckMenuItem,
     auto_aspect_item: CheckMenuItem,
     autostart_item: CheckMenuItem,
     columns_items: Vec<(u32, CheckMenuItem)>,
     rows_items: Vec<(u32, CheckMenuItem)>,
     id_enabled: MenuId,
     id_disable_snap: MenuId,
-    id_auto_restore: MenuId,
     id_auto_aspect: MenuId,
     id_autostart: MenuId,
     id_open: MenuId,
@@ -57,12 +53,11 @@ pub struct Tray {
 }
 
 impl Tray {
-    /// トレイを生成する。`view` の状態（有効・スナップ無効・自動復元・自動起動・列数・行数）を初期表示に反映する。
+    /// トレイを生成する。`view` の状態（有効・スナップ無効・自動起動・列数・行数）を初期表示に反映する。
     pub fn new(view: &TrayView) -> Option<Tray> {
         let menu = Menu::new();
         let enabled_item = CheckMenuItem::new("ウィンドウ管理を有効化", true, view.enabled, None);
         let disable_snap_item = CheckMenuItem::new("標準スナップを無効化", true, view.disable_snap, None);
-        let auto_restore_item = CheckMenuItem::new("覚えた配置を自動復元", true, view.auto_restore, None);
         let auto_aspect_item = CheckMenuItem::new("アスペクト比で自動分割", true, view.auto_aspect, None);
         let columns_menu = Submenu::new("列数（横の分割）", true);
         let columns_items = append_choices(&columns_menu, view.columns);
@@ -75,7 +70,6 @@ impl Tray {
 
         menu.append(&enabled_item).ok()?;
         menu.append(&disable_snap_item).ok()?;
-        menu.append(&auto_restore_item).ok()?;
         menu.append(&auto_aspect_item).ok()?;
         menu.append(&PredefinedMenuItem::separator()).ok()?;
         menu.append(&columns_menu).ok()?;
@@ -97,7 +91,6 @@ impl Tray {
         Some(Tray {
             id_enabled: enabled_item.id().clone(),
             id_disable_snap: disable_snap_item.id().clone(),
-            id_auto_restore: auto_restore_item.id().clone(),
             id_auto_aspect: auto_aspect_item.id().clone(),
             id_autostart: autostart_item.id().clone(),
             id_open: open_item.id().clone(),
@@ -105,7 +98,6 @@ impl Tray {
             id_quit: quit_item.id().clone(),
             enabled_item,
             disable_snap_item,
-            auto_restore_item,
             auto_aspect_item,
             autostart_item,
             columns_items,
@@ -121,8 +113,6 @@ impl Tray {
             Some(TrayCommand::ToggleEnabled)
         } else if ev.id == self.id_disable_snap {
             Some(TrayCommand::ToggleDisableSnap)
-        } else if ev.id == self.id_auto_restore {
-            Some(TrayCommand::ToggleAutoRestore)
         } else if ev.id == self.id_auto_aspect {
             Some(TrayCommand::ToggleAutoAspect)
         } else if ev.id == self.id_autostart {
@@ -146,7 +136,6 @@ impl Tray {
     pub fn apply(&self, view: &TrayView) {
         self.enabled_item.set_checked(view.enabled);
         self.disable_snap_item.set_checked(view.disable_snap);
-        self.auto_restore_item.set_checked(view.auto_restore);
         self.auto_aspect_item.set_checked(view.auto_aspect);
         self.autostart_item.set_checked(view.autostart);
         check_only(&self.columns_items, view.columns);

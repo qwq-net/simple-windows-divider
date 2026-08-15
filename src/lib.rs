@@ -3,7 +3,7 @@
 //! Windows 11 常駐型ウィンドウ管理ユーティリティのライブラリクレート。
 //!
 //! 設計の要は「純ロジック」と「Win32 副作用」の分離である:
-//! - 純ロジック（座標計算・グリッド占有範囲の操作・配置の学習データ・ホットキー文字列パース）は
+//! - 純ロジック（座標計算・グリッド占有範囲の操作・ホットキー文字列パース）は
 //!   `windows` クレートに一切依存せず、どのプラットフォームでも `cargo test` できる。
 //! - Win32 を直接叩くポート層（`win` 以下）とそれを使う配線（`app` / `tray` / `watcher`）は
 //!   `#[cfg(windows)]` でゲートし、Windows ターゲットでのみコンパイルされる。
@@ -18,8 +18,6 @@ pub mod config;
 pub mod fsutil;
 pub mod hotkey;
 pub mod layout;
-pub mod layouts;
-pub mod occupancy;
 pub mod window_style;
 
 // ── Win32 副作用ポート層・配線（Windows ターゲットでのみコンパイル） ──

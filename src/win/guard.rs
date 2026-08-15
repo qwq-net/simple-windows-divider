@@ -1,4 +1,4 @@
-//! アンチチート安全のための介入可否判定（機能 B/C 共通の関門）。
+//! アンチチート安全のための介入可否判定（能動的なウィンドウ操作の関門）。
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Shell::{
@@ -18,16 +18,20 @@ pub enum Interventability {
     SkipExcluded,
 }
 
-/// プロセスを開かずに判定できる関門。安価な順（無効 → スタイル → 全画面）に並べる。
+/// `hwnd` にウィンドウ操作を行ってよいか判定する。
 ///
-/// ホットパス（機能 C のイベント処理）で、一過性・子ウィンドウを `OpenProcess` の前に弾くために使う:
+/// 安価な順（無効 → スタイル → 全画面）にプロセスを開かない判定を先に通し、通過したものだけ
+/// `OpenProcess` を伴うプロセス名の除外判定にかける（ゲームプロセスへハンドルを開く頻度を最小化する）:
 /// - 無効ウィンドウ → `SkipInvalid`。
 /// - `skip_non_tileable` かつタイトルバーもリサイズ枠も無いウィンドウ（ボーダーレス全画面・オーバーレイ等）
 ///   → `SkipNonTileable`。`GetWindowLongPtr` だけで判定でき最も安い。未知のゲームも名前リスト無しに避けられる。
 /// - `skip_when_fullscreen` かつフルスクリーン/排他状態 → `SkipFullscreen`。
+/// - 所有 exe が除外リストにある → `SkipExcluded`。
 ///
-/// `Ok` 以外はそのウィンドウに触れない。プロセス名による除外はここに含めない（[`Exclusions::excludes`] で別途）。
-pub fn cheap_interventability(hwnd: HWND, exclusions: &Exclusions) -> Interventability {
+/// `Ok` 以外はそのウィンドウに一切触れない。能動的なウィンドウ操作（矢印ホットキー）は必ずこれを通す。
+/// 昇格ウィンドウはここでは弾かず、`SetWindowPos` の失敗（ACCESS_DENIED）として握り潰す方針
+/// （事前判定が不確実なため）。
+pub fn should_intervene(hwnd: HWND, exclusions: &Exclusions) -> Interventability {
     if hwnd.0.is_null() {
         return Interventability::SkipInvalid;
     }
@@ -39,24 +43,8 @@ pub fn cheap_interventability(hwnd: HWND, exclusions: &Exclusions) -> Interventa
     if exclusions.skip_when_fullscreen && is_fullscreen_context(hwnd) {
         return Interventability::SkipFullscreen;
     }
-    Interventability::Ok
-}
-
-/// `hwnd` にウィンドウ操作を行ってよいか判定する。
-///
-/// まず [`cheap_interventability`]（ハンドル不要の判定）を通し、通過したものだけ `OpenProcess` を伴う
-/// プロセス名の除外判定にかける。所有 exe が除外リストにあれば `SkipExcluded`。これでゲームプロセスへ
-/// ハンドルを開く頻度を最小化する。
-///
-/// 機能 B（ホットキー時）と機能 C（イベント時）の両方が必ずこれを通す。昇格ウィンドウは
-/// ここでは弾かず、`SetWindowPos` の失敗（ACCESS_DENIED）として握り潰す方針（事前判定が不確実なため）。
-pub fn should_intervene(hwnd: HWND, exclusions: &Exclusions) -> Interventability {
-    let cheap = cheap_interventability(hwnd, exclusions);
-    if cheap != Interventability::Ok {
-        return cheap;
-    }
-    if let Some(key) = window_info::window_key(hwnd) {
-        if exclusions.excludes(&key.exe) {
+    if let Some(exe) = window_info::window_exe(hwnd) {
+        if exclusions.excludes(&exe) {
             return Interventability::SkipExcluded;
         }
     }

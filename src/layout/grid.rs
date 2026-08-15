@@ -5,10 +5,6 @@
 //! - 左/右キー（[`Family::Left`]/[`Family::Right`]）は列方向のみ、上/下キーは行方向のみを変え、もう一方の軸は保つ。
 //! - 各軸の規則（[`axis_toward_start`] / [`axis_toward_end`]）: 幅が 2 以上なら手前/奥の辺を削って寄せ、
 //!   幅 1 ならその方向へ 1 セル広げる（端で停止）。
-//!
-//! 学習した占有範囲を別グリッドへ適用するときは [`GridSpan::clamp_to`] で範囲外インデックスを丸める。
-
-use serde::{Deserialize, Serialize};
 
 use super::geometry::Rect;
 
@@ -39,7 +35,7 @@ impl Family {
 }
 
 /// グリッド上の占有範囲。列 `l..=r`、行 `t..=b`（いずれも 0 始まり・両端含む、`l<=r`・`t<=b`）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridSpan {
     pub l: u32,
     pub r: u32,
@@ -51,21 +47,6 @@ impl GridSpan {
     /// グリッド全体を占有する範囲（最大化相当）。`columns`/`rows` は最低 1 として扱う。
     pub fn full(columns: u32, rows: u32) -> GridSpan {
         GridSpan { l: 0, r: columns.max(1) - 1, t: 0, b: rows.max(1) - 1 }
-    }
-
-    /// 占有範囲を `columns × rows` のグリッドに収まるようクランプする。
-    ///
-    /// 学習時より分割数が小さくなった場合に、範囲外のインデックスを最大インデックス（`columns-1` /
-    /// `rows-1`）へ丸める。`columns`/`rows` は最低 1 として扱う。`l<=r`・`t<=b` の関係は保たれる。
-    pub fn clamp_to(self, columns: u32, rows: u32) -> GridSpan {
-        let max_c = columns.max(1) - 1;
-        let max_r = rows.max(1) - 1;
-        GridSpan {
-            l: self.l.min(max_c),
-            r: self.r.min(max_c),
-            t: self.t.min(max_r),
-            b: self.b.min(max_r),
-        }
     }
 
     /// この占有範囲を作業領域 `work` 上の実矩形へ変換する。隣接セルの境界は [`Rect::sub`] で一致する。
@@ -393,13 +374,6 @@ mod tests {
         assert_eq!(estimate_span(work, cur, COLS, ROWS), span(0, 0, 0, 1));
     }
 
-    #[test]
-    fn clamp_to_shrinks_out_of_range_indices() {
-        // 3×2 で学習した右下 (2,2,1,1) を 2×1 グリッドへ → 右端=1・下端=0 に丸める。
-        assert_eq!(span(2, 2, 1, 1).clamp_to(2, 1), span(1, 1, 0, 0));
-        // 収まっている範囲はそのまま。
-        assert_eq!(span(0, 1, 0, 1).clamp_to(3, 2), span(0, 1, 0, 1));
-    }
 
     #[test]
     fn fill_axis_maximizes_one_axis() {

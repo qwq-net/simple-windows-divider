@@ -2,8 +2,7 @@
 //!
 //! すべて宣言的なデータ型で、`#[serde(default)]` により未指定フィールドは [`Default`] 値で埋まる
 //! （= 設定ファイルが部分的でも壊れない）。ホットキーは文字列のまま保持し、解釈は
-//! [`crate::hotkey::parse`] が別途行う。学習による自動復元のデータは設定とは別ファイルに持つ
-//! （[`crate::layouts`]）。
+//! [`crate::hotkey::parse`] が別途行う。
 
 use serde::{Deserialize, Serialize};
 
@@ -40,24 +39,17 @@ impl Default for GridConfig {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct General {
-    /// 機能 B/C の有効・無効（トレイから切替）。false の間は標準スナップを復元し介入しない。
+    /// 機能 B の有効・無効（トレイから切替）。false の間は標準スナップを復元し介入しない。
     pub enabled: bool,
     /// 機能 A: Windows 標準スナップ（Aero Snap）を無効化するか。
     pub disable_snap: bool,
     /// 機能 A: Snap Assist 系レジストリも無効化するか（best-effort）。
     pub disable_snap_assist: bool,
-    /// 機能 C: 学習した配置を新規ウィンドウへ自動復元するか（トレイから切替）。
-    pub auto_restore: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
-        General {
-            enabled: true,
-            disable_snap: true,
-            disable_snap_assist: true,
-            auto_restore: true,
-        }
+        General { enabled: true, disable_snap: true, disable_snap_assist: true }
     }
 }
 
@@ -131,7 +123,6 @@ mod tests {
         assert_eq!(cfg.hotkeys, Hotkeys::default());
         assert_eq!(cfg.grid, GridConfig::default());
         assert!(cfg.general.enabled);
-        assert!(cfg.general.auto_restore);
         assert_eq!(cfg.grid.columns, 3);
         assert_eq!(cfg.grid.rows, 2);
         assert!(!cfg.grid.auto_aspect);
@@ -144,7 +135,6 @@ mod tests {
         // 未指定は既定のまま
         assert!(cfg.general.enabled);
         assert!(cfg.general.disable_snap_assist);
-        assert!(cfg.general.auto_restore);
     }
 
     #[test]

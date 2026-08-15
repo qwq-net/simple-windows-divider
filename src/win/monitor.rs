@@ -5,7 +5,7 @@ use std::mem::size_of;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFOEXW,
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFO,
     MONITOR_DEFAULTTONEAREST,
 };
 
@@ -19,25 +19,15 @@ pub struct MonitorInfo {
     pub work_area: Rect,
     /// モニタ全体の矩形（フルスクリーン判定に使う）。
     pub full: Rect,
-    /// ディスプレイ名（`\\.\DISPLAYn`）。学習スロットの同定に使う。
-    pub display: String,
 }
 
 fn monitor_info(hmon: HMONITOR) -> Option<MonitorInfo> {
-    let mut mi = MONITORINFOEXW::default();
-    mi.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
-    // MONITORINFOEXW の先頭は monitorInfo。cbSize を EXW サイズにしておくと szDevice も埋まる。
-    let ok = unsafe { GetMonitorInfoW(hmon, &mut mi.monitorInfo) };
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let ok = unsafe { GetMonitorInfoW(hmon, &mut mi) };
     if !ok.as_bool() {
         return None;
     }
-    let display = String::from_utf16_lossy(&mi.szDevice);
-    let display = display.trim_end_matches('\0').to_string();
-    Some(MonitorInfo {
-        work_area: from_rect(mi.monitorInfo.rcWork),
-        full: from_rect(mi.monitorInfo.rcMonitor),
-        display,
-    })
+    Some(MonitorInfo { work_area: from_rect(mi.rcWork), full: from_rect(mi.rcMonitor) })
 }
 
 /// 指定ウィンドウが属する（最も重なる）モニタの情報。取得失敗時 `None`。
@@ -58,11 +48,6 @@ pub fn enumerate() -> Vec<MonitorInfo> {
         );
     }
     out
-}
-
-/// ディスプレイ名（`\\.\DISPLAYn`）に一致するモニタを返す。該当が無ければ `None`（復元時に使う）。
-pub fn monitor_by_name(name: &str) -> Option<MonitorInfo> {
-    enumerate().into_iter().find(|m| m.display == name)
 }
 
 unsafe extern "system" fn enum_proc(hmon: HMONITOR, _hdc: HDC, _rc: *mut RECT, lparam: LPARAM) -> BOOL {

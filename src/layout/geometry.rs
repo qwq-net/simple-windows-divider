@@ -3,12 +3,10 @@
 //! 座標は Win32 と同じ「仮想デスクトップ上の物理ピクセル」を想定する（左上原点・右下方向が正）。
 //! ただし本モジュールは Win32 に依存せず、純粋な整数/割合計算のみを行う。
 
-use serde::{Deserialize, Serialize};
-
 /// 軸平行な矩形。`right`/`bottom` は排他的境界として扱う（幅 = `right - left`）。
 ///
 /// Win32 の `RECT` と同じ並びなので、Windows 側で相互変換しやすい。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Rect {
     pub left: i32,
     pub top: i32,
@@ -54,17 +52,6 @@ impl Rect {
         let bx = |f: f64| self.left + (w * f).round() as i32;
         let by = |f: f64| self.top + (h * f).round() as i32;
         Rect { left: bx(x0), top: by(y0), right: bx(x1), bottom: by(y1) }
-    }
-
-    /// `other` と各辺（left/top/right/bottom）の差の絶対値がすべて `tol` 以下なら `true`。
-    ///
-    /// `tol` は 0 以上を想定する（負だと常に `false`）。配置後の収束判定や、保存済み占有範囲が
-    /// 現在のウィンドウ矩形と一致するかの再利用判定に使う。副作用なし。
-    pub fn approx_eq(&self, other: Rect, tol: i32) -> bool {
-        (self.left - other.left).abs() <= tol
-            && (self.top - other.top).abs() <= tol
-            && (self.right - other.right).abs() <= tol
-            && (self.bottom - other.bottom).abs() <= tol
     }
 
     /// 自身が `outer` を四辺すべてで覆う（完全に含む）か。辺がちょうど一致する場合も覆うとみなす。
@@ -146,15 +133,6 @@ mod tests {
             work.sub(0.0, 1.0, 0.5, 1.0),
             Rect { left: 0, top: 300, right: 800, bottom: 600 }
         );
-    }
-
-    #[test]
-    fn approx_eq_respects_tolerance_on_every_edge() {
-        let a = Rect { left: 0, top: 0, right: 100, bottom: 100 };
-        // 全辺が許容内（差 0〜2、tol=2）。
-        assert!(a.approx_eq(Rect { left: 2, top: -2, right: 98, bottom: 102 }, 2));
-        // 1 辺でも許容を超えれば不一致（bottom の差 3 > tol=2）。
-        assert!(!a.approx_eq(Rect { left: 0, top: 0, right: 100, bottom: 103 }, 2));
     }
 
     #[test]

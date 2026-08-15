@@ -6,9 +6,9 @@ use std::mem::size_of;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, IsWindow,
-    SetWindowPos, ShowWindow, GWL_STYLE, SW_MAXIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOZORDER, WINDOWPLACEMENT,
+    GetForegroundWindow, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, SetWindowPos,
+    ShowWindow, GWL_STYLE, SW_MAXIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
+    WINDOWPLACEMENT,
 };
 
 use super::convert::{from_rect, to_rect};
@@ -22,11 +22,6 @@ pub fn foreground_window() -> Option<HWND> {
     } else {
         Some(hwnd)
     }
-}
-
-/// `hwnd` が現存する有効なウィンドウか。破棄済みハンドル（spans の掃除など）の判定に使う。
-pub fn is_window(hwnd: HWND) -> bool {
-    unsafe { IsWindow(Some(hwnd)).as_bool() }
 }
 
 /// ウィンドウの `GWL_STYLE` ビット（`WS_*`）。取得失敗時は 0（＝どのスタイルも立っていない扱い）。
