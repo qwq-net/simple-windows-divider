@@ -20,4 +20,7 @@ fn main() {
         .expect("unable to embed application manifest");
     }
     println!("cargo:rerun-if-changed=build.rs");
+    // 宣言しないと環境変数の変化で build.rs が再実行されず、キャッシュ済みのマニフェスト埋め込み
+    // リンク引数が残って WINDIVIDER_SKIP_MANIFEST の切り替えが効かない。
+    println!("cargo:rerun-if-env-changed=WINDIVIDER_SKIP_MANIFEST");
 }

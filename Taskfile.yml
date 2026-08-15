@@ -32,6 +32,10 @@ tasks:
     cmds:
       - cargo build --release
 
+  build-win:
+    desc: "WSL2 上での Windows 用リリースビルド（x86_64-pc-windows-gnu）"
+    cmds:
+      - cargo xwin build --release --target x86_64-pc-windows-msvc
   ci:
     desc: "CI 相当（test + lint）"
     cmds:
